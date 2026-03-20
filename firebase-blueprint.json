@@ -1,0 +1,56 @@
+{
+  "entities": {
+    "SensorData": {
+      "title": "Sensor Data",
+      "description": "Logged data from DS18B20 and MQ2 sensors",
+      "type": "object",
+      "properties": {
+        "temperature": {
+          "type": "number",
+          "description": "Temperature in Celsius from DS18B20"
+        },
+        "gas": {
+          "type": "number",
+          "description": "Gas level from MQ2 sensor"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Time when data was logged"
+        }
+      },
+      "required": ["temperature", "gas", "timestamp"]
+    },
+    "LoggingSettings": {
+      "title": "Logging Settings",
+      "description": "Configuration for the ESP32 logging behavior",
+      "type": "object",
+      "properties": {
+        "isLogging": {
+          "type": "boolean",
+          "description": "Whether the ESP32 should be logging data"
+        },
+        "interval": {
+          "type": "integer",
+          "description": "Logging interval in milliseconds"
+        },
+        "lastUpdated": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last time settings were changed"
+        }
+      },
+      "required": ["isLogging", "interval"]
+    }
+  },
+  "firestore": {
+    "settings/logging": {
+      "schema": "LoggingSettings",
+      "description": "Global logging configuration"
+    },
+    "sensor_logs": {
+      "schema": "SensorData",
+      "description": "Collection of historical sensor data"
+    }
+  }
+}

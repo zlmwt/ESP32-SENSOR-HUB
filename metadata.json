@@ -1,0 +1,5 @@
+{
+  "name": "ESP32 Sensor Hub",
+  "description": "Real-time monitoring and logging for DS18B20 Temperature and MQ2 Gas sensors with Firebase integration.",
+  "requestFramePermissions": []
+}
