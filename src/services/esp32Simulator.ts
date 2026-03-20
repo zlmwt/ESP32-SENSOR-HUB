@@ -1,4 +1,4 @@
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { ref, push, serverTimestamp } from 'firebase/database';
 import { db } from '../firebase';
 
 export interface SimulatedData {
@@ -54,7 +54,7 @@ export class ESP32Simulator {
       };
 
       try {
-        await addDoc(collection(db, 'sensor_logs'), {
+        await push(ref(db, 'sensor_logs'), {
           ...data,
           timestamp: serverTimestamp()
         });

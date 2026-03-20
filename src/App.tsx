@@ -1,14 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { 
-  collection, 
-  query, 
-  orderBy, 
-  limit, 
-  onSnapshot, 
-  doc, 
-  setDoc, 
-  serverTimestamp,
-} from 'firebase/firestore';
+  ref, 
+  onValue, 
+  set, 
+  push, 
+  query as dbQuery, 
+  orderByChild, 
+  limitToLast,
+  serverTimestamp as dbServerTimestamp
+} from 'firebase/database';
 import { db } from './firebase';
 import { SensorData, LoggingSettings } from './types';
 import { SensorChart } from './components/SensorChart';
@@ -112,7 +112,7 @@ export default function App() {
     }
   }, [logs, lastNotificationTime, lastRiskLevel, isAuthenticated]);
 
-  // Firestore listeners
+  // Realtime Database listeners
   useEffect(() => {
     if (!isAuthenticated) {
       setIsLoading(false);
@@ -120,32 +120,43 @@ export default function App() {
     }
 
     // Listen to settings
-    const settingsUnsubscribe = onSnapshot(doc(db, 'settings', 'logging'), (snapshot) => {
+    const settingsRef = ref(db, 'settings/logging');
+    const settingsUnsubscribe = onValue(settingsRef, (snapshot) => {
       if (snapshot.exists()) {
-        setSettings(snapshot.data() as LoggingSettings);
+        setSettings(snapshot.val() as LoggingSettings);
       } else {
         // Initialize settings if they don't exist
-        setDoc(doc(db, 'settings', 'logging'), {
+        set(settingsRef, {
           isLogging: false,
           interval: 5000,
-          lastUpdated: serverTimestamp()
+          lastUpdated: dbServerTimestamp()
         });
       }
       setIsLoading(false);
     });
 
     // Listen to logs (last 10)
-    const logsQuery = query(
-      collection(db, 'sensor_logs'),
-      orderBy('timestamp', 'desc'),
-      limit(10)
+    const logsRef = ref(db, 'sensor_logs');
+    const logsQuery = dbQuery(
+      logsRef,
+      orderByChild('timestamp'),
+      limitToLast(10)
     );
-    const logsUnsubscribe = onSnapshot(logsQuery, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as SensorData[];
-      setLogs(data);
+    const logsUnsubscribe = onValue(logsQuery, (snapshot) => {
+      if (snapshot.exists()) {
+        const data: SensorData[] = [];
+        snapshot.forEach((childSnapshot) => {
+          data.push({
+            id: childSnapshot.key as string,
+            ...childSnapshot.val()
+          });
+        });
+        // Realtime Database returns data in ascending order of the order key
+        // We want descending for the UI
+        setLogs(data.reverse());
+      } else {
+        setLogs([]);
+      }
     });
 
     return () => {

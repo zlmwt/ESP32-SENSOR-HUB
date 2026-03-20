@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Play, Square, Timer, Save } from 'lucide-react';
 import { LoggingSettings } from '../types';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { ref, set, serverTimestamp } from 'firebase/database';
 import { db } from '../firebase';
 
 interface LoggingControlsProps {
@@ -16,7 +16,7 @@ export const LoggingControls: React.FC<LoggingControlsProps> = ({ settings }) =>
     if (!settings) return;
     setIsUpdating(true);
     try {
-      await setDoc(doc(db, 'settings', 'logging'), {
+      await set(ref(db, 'settings/logging'), {
         ...settings,
         isLogging: !settings.isLogging,
         lastUpdated: serverTimestamp()
@@ -32,7 +32,7 @@ export const LoggingControls: React.FC<LoggingControlsProps> = ({ settings }) =>
     if (!settings) return;
     setIsUpdating(true);
     try {
-      await setDoc(doc(db, 'settings', 'logging'), {
+      await set(ref(db, 'settings/logging'), {
         ...settings,
         interval: localInterval,
         lastUpdated: serverTimestamp()

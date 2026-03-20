@@ -3,28 +3,41 @@ import nodemailer from "nodemailer";
 import path from "path";
 import dotenv from "dotenv";
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { getDatabase, ref, push, serverTimestamp } from 'firebase/database';
+import fs from 'fs';
+import { createServer as createViteServer } from "vite";
 
 dotenv.config();
 
-// Initialize Firebase for server-side logging
-const firebaseConfig = {
-  apiKey: process.env.GEMINI_API_KEY, // Use existing key or provide specific one
-  authDomain: `${process.env.PROJECT_ID}.firebaseapp.com`,
-  projectId: process.env.PROJECT_ID,
-  appId: process.env.APP_ID,
-};
+// Load Firebase config from the same source as the client
+const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
+let fbConfig = {};
+try {
+  if (fs.existsSync(configPath)) {
+    fbConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+  }
+} catch (err) {
+  console.error("[Server] Failed to load firebase-applet-config.json:", err);
+}
 
-// We'll use the client-side config if available, otherwise fallback to env
-const fbConfig = process.env.FIREBASE_CONFIG ? JSON.parse(process.env.FIREBASE_CONFIG) : firebaseConfig;
+// Initialize Firebase for server-side logging
+if (Object.keys(fbConfig).length === 0) {
+  console.warn("[Server] Firebase configuration is empty. Firebase features will be disabled.");
+}
 const fbApp = initializeApp(fbConfig);
-const db = getFirestore(fbApp);
+// @ts-ignore - databaseURL might be in the config
+const db = getDatabase(fbApp, fbConfig.databaseURL);
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
   app.use(express.json());
+
+  // Health check endpoint
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", time: new Date().toISOString() });
+  });
 
   // ESP32 Data Logging API
   app.post("/api/esp32/log", async (req, res) => {
@@ -56,28 +69,24 @@ async function startServer() {
     }
 
     try {
-      const docRef = await addDoc(collection(db, 'sensor_logs'), {
+      const logsRef = ref(db, 'sensor_logs');
+      const newLogRef = await push(logsRef, {
         temperature: tempNum,
         gas: gasNum,
         timestamp: serverTimestamp()
       });
-      console.log(`[Server] ESP32 Data logged:`, { temperature: tempNum, gas: gasNum, id: docRef.id });
+      
+      console.log(`[Server] ESP32 Data logged:`, { temperature: tempNum, gas: gasNum, id: newLogRef.key });
       res.json({ 
         success: true, 
-        id: docRef.id,
+        id: newLogRef.key,
         message: "Data logged successfully" 
       });
     } catch (error: any) {
       console.error("[Server] Failed to log ESP32 data:", error);
       
-      // Handle specific Firebase errors
-      const statusCode = error.code === 'permission-denied' ? 403 : 500;
-      const errorMessage = error.code === 'permission-denied' 
-        ? "Database permission denied. Please check Firestore security rules."
-        : "Failed to log data to the database.";
-
-      res.status(statusCode).json({ 
-        error: errorMessage,
+      res.status(500).json({ 
+        error: "Failed to log data to the database.",
         code: error.code || "unknown_error",
         details: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
@@ -136,12 +145,12 @@ async function startServer() {
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
     try {
-      const { createServer: createViteServer } = await import("vite");
       const vite = await createViteServer({
         server: { middlewareMode: true },
         appType: "spa",
       });
       app.use(vite.middlewares);
+      console.log("[Server] Vite dev server middleware active.");
     } catch (e) {
       console.warn("[Server] Vite dev server failed to start, falling back to static serving.");
     }
@@ -149,22 +158,28 @@ async function startServer() {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
-      // Check if file exists before sending
       const indexPath = path.join(distPath, 'index.html');
-      res.sendFile(indexPath);
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+      } else {
+        res.status(404).send("Application build not found. Please run 'npm run build' first.");
+      }
     });
   }
 
   if (!process.env.VERCEL) {
     app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Server running on http://localhost:${PORT}`);
+      console.log(`[Server] Listening on http://0.0.0.0:${PORT}`);
     });
   }
 
   return app;
 }
 
-const appPromise = startServer();
+const appPromise = startServer().catch(err => {
+  console.error("[Server] Critical startup error:", err);
+  process.exit(1);
+});
 
 // Export for Vercel
 export default async (req: any, res: any) => {

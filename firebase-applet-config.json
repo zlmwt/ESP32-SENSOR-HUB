@@ -1,10 +1,9 @@
 {
-  "projectId": "gen-lang-client-0386152989",
-  "appId": "1:1060344720752:web:57a2d0a435b280f9faf3b5",
-  "apiKey": "AIzaSyA5blb5LDQ5Cl7c0STMZj8L0ID-ydm2fpY",
-  "authDomain": "gen-lang-client-0386152989.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-d352c515-1685-4776-ab02-1ba9654a3d60",
-  "storageBucket": "gen-lang-client-0386152989.firebasestorage.app",
-  "messagingSenderId": "1060344720752",
-  "measurementId": ""
+  "projectId": "esp-32-logging-f9d7d",
+  "appId": "1:97614887539:web:d2e1066511b9afec76c806",
+  "apiKey": "AIzaSyASQiHRFcrBNQ_ujuYXZjqXQ_1vxhLmsLw",
+  "authDomain": "esp-32-logging-f9d7d.firebaseapp.com",
+  "databaseURL": "https://esp-32-logging-f9d7d-default-rtdb.asia-southeast1.firebasedatabase.app",
+  "storageBucket": "esp-32-logging-f9d7d.firebasestorage.app",
+  "messagingSenderId": "97614887539"
 }
