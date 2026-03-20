@@ -12,6 +12,7 @@ export interface SimulationConfig {
   tempMax: number;
   gasMin: number;
   gasMax: number;
+  noise: number; // 0 to 1
 }
 
 export class ESP32Simulator {
@@ -21,7 +22,8 @@ export class ESP32Simulator {
     tempMin: 22,
     tempMax: 30,
     gasMin: 150,
-    gasMax: 500
+    gasMax: 500,
+    noise: 0.5
   };
 
   constructor(onDataSent?: (data: SimulatedData) => void) {
@@ -38,9 +40,16 @@ export class ESP32Simulator {
     console.log(`[ESP32 Simulator] Starting with interval: ${intervalMs}ms`);
     
     this.intervalId = setInterval(async () => {
+      const generateValue = (min: number, max: number, noise: number) => {
+        const midpoint = (min + max) / 2;
+        const halfRange = (max - min) / 2;
+        // If noise is 0, return midpoint. If noise is 1, return full random in range.
+        return midpoint + (Math.random() * 2 - 1) * halfRange * noise;
+      };
+
       const data: SimulatedData = {
-        temperature: this.config.tempMin + Math.random() * (this.config.tempMax - this.config.tempMin),
-        gas: this.config.gasMin + Math.random() * (this.config.gasMax - this.config.gasMin),
+        temperature: generateValue(this.config.tempMin, this.config.tempMax, this.config.noise),
+        gas: generateValue(this.config.gasMin, this.config.gasMax, this.config.noise),
         timestamp: new Date()
       };
 

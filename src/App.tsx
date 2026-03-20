@@ -35,7 +35,8 @@ export default function App() {
     tempMin: 22,
     tempMax: 30,
     gasMin: 150,
-    gasMax: 500
+    gasMax: 500,
+    noise: 0.5
   });
   const [simulator] = useState(() => new ESP32Simulator((data) => {
     setSimLogs(prev => [data, ...prev].slice(0, 20));

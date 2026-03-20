@@ -29,8 +29,14 @@ service cloud.firestore {
 
     // Sensor logs collection
     match /sensor_logs/{logId} {
-      allow read, create: if true;
-      allow update, delete: if false; // Logs remain immutable
+      // Allow unauthenticated creation for ESP32 (must match schema)
+      allow create: if isValidSensorData(request.resource.data);
+      
+      // Allow authenticated users to read logs
+      allow read: if isAuthenticated();
+      
+      // Logs remain immutable
+      allow update, delete: if false;
     }
 
     // Default deny
