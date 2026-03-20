@@ -24,15 +24,13 @@ service cloud.firestore {
 
     // Settings collection
     match /settings/logging {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated() && isValidLoggingSettings(request.resource.data);
+      allow read, write: if true;
     }
 
     // Sensor logs collection
     match /sensor_logs/{logId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && isValidSensorData(request.resource.data);
-      allow update, delete: if false; // Logs are immutable
+      allow read, create: if true;
+      allow update, delete: if false; // Logs remain immutable
     }
 
     // Default deny

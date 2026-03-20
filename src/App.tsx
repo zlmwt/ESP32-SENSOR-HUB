@@ -8,22 +8,19 @@ import {
   doc, 
   setDoc, 
   serverTimestamp,
-  addDoc
 } from 'firebase/firestore';
-import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
-import { db, auth } from './firebase';
+import { db } from './firebase';
 import { SensorData, LoggingSettings } from './types';
 import { SensorChart } from './components/SensorChart';
 import { SensorTable } from './components/SensorTable';
 import { LoggingControls } from './components/LoggingControls';
 import { VirtualDeviceConsole } from './components/VirtualDeviceConsole';
 import { ESP32Simulator, SimulatedData } from './services/esp32Simulator';
-import { Activity, Thermometer, Wind, RefreshCw, LogIn, Cpu } from 'lucide-react';
+import { Activity, Thermometer, Wind, RefreshCw, Cpu } from 'lucide-react';
 
 export default function App() {
   const [logs, setLogs] = useState<SensorData[]>([]);
   const [settings, setSettings] = useState<LoggingSettings | null>(null);
-  const [user, setUser] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSimulating, setIsSimulating] = useState(false);
   const [simLogs, setSimLogs] = useState<SimulatedData[]>([]);
@@ -31,19 +28,8 @@ export default function App() {
     setSimLogs(prev => [data, ...prev].slice(0, 20));
   }));
 
-  // Auth listener
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      setIsLoading(false);
-    });
-    return () => unsubscribe();
-  }, []);
-
   // Firestore listeners
   useEffect(() => {
-    if (!user) return;
-
     // Listen to settings
     const settingsUnsubscribe = onSnapshot(doc(db, 'settings', 'logging'), (snapshot) => {
       if (snapshot.exists()) {
@@ -56,6 +42,7 @@ export default function App() {
           lastUpdated: serverTimestamp()
         });
       }
+      setIsLoading(false);
     });
 
     // Listen to logs (last 10)
@@ -76,7 +63,7 @@ export default function App() {
       settingsUnsubscribe();
       logsUnsubscribe();
     };
-  }, [user]);
+  }, []);
 
   // Mock Data Simulation (for testing without real ESP32)
   useEffect(() => {
@@ -88,38 +75,10 @@ export default function App() {
     return () => simulator.stop();
   }, [isSimulating, settings?.isLogging, settings?.interval]);
 
-  const handleLogin = async () => {
-    const provider = new GoogleAuthProvider();
-    try {
-      await signInWithPopup(auth, provider);
-    } catch (err) {
-      console.error("Login error:", err);
-    }
-  };
-
   if (isLoading) {
     return (
       <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
         <RefreshCw className="text-emerald-500 animate-spin" size={48} />
-      </div>
-    );
-  }
-
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center p-6">
-        <div className="max-w-md w-full bg-white/5 backdrop-blur-xl rounded-3xl p-10 border border-white/10 shadow-2xl text-center">
-          <Activity className="mx-auto text-emerald-500 mb-6" size={64} />
-          <h1 className="text-3xl font-bold text-white mb-4">ESP32 Sensor Hub</h1>
-          <p className="text-white/60 mb-8">Connect to your real-time sensor monitoring dashboard.</p>
-          <button
-            onClick={handleLogin}
-            className="w-full flex items-center justify-center gap-3 bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-4 px-6 rounded-2xl transition-all shadow-lg shadow-emerald-500/20"
-          >
-            <LogIn size={20} />
-            Connect to Dashboard
-          </button>
-        </div>
       </div>
     );
   }
