@@ -7,12 +7,30 @@ export interface SimulatedData {
   timestamp: Date;
 }
 
+export interface SimulationConfig {
+  tempMin: number;
+  tempMax: number;
+  gasMin: number;
+  gasMax: number;
+}
+
 export class ESP32Simulator {
   private intervalId: any = null;
   private onDataSent?: (data: SimulatedData) => void;
+  private config: SimulationConfig = {
+    tempMin: 22,
+    tempMax: 30,
+    gasMin: 150,
+    gasMax: 500
+  };
 
   constructor(onDataSent?: (data: SimulatedData) => void) {
     this.onDataSent = onDataSent;
+  }
+
+  setConfig(newConfig: Partial<SimulationConfig>) {
+    this.config = { ...this.config, ...newConfig };
+    console.log(`[ESP32 Simulator] Config updated:`, this.config);
   }
 
   start(intervalMs: number) {
@@ -21,8 +39,8 @@ export class ESP32Simulator {
     
     this.intervalId = setInterval(async () => {
       const data: SimulatedData = {
-        temperature: 22 + Math.random() * 8, // 22-30 range
-        gas: 150 + Math.random() * 350,      // 150-500 range
+        temperature: this.config.tempMin + Math.random() * (this.config.tempMax - this.config.tempMin),
+        gas: this.config.gasMin + Math.random() * (this.config.gasMax - this.config.gasMin),
         timestamp: new Date()
       };
 

@@ -14,22 +14,110 @@ import { SensorData, LoggingSettings } from './types';
 import { SensorChart } from './components/SensorChart';
 import { SensorTable } from './components/SensorTable';
 import { LoggingControls } from './components/LoggingControls';
+import { RiskAnalysis } from './components/RiskAnalysis';
+import { SettingsPanel } from './components/SettingsPanel';
+import { LoginPage } from './components/LoginPage';
 import { VirtualDeviceConsole } from './components/VirtualDeviceConsole';
-import { ESP32Simulator, SimulatedData } from './services/esp32Simulator';
-import { Activity, Thermometer, Wind, RefreshCw, Cpu } from 'lucide-react';
+import { ESP32Simulator, SimulatedData, SimulationConfig } from './services/esp32Simulator';
+import { Activity, Thermometer, Wind, RefreshCw, Cpu, Settings } from 'lucide-react';
 
 export default function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    return localStorage.getItem('esp32_auth') === 'true';
+  });
   const [logs, setLogs] = useState<SensorData[]>([]);
   const [settings, setSettings] = useState<LoggingSettings | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSimulating, setIsSimulating] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [simLogs, setSimLogs] = useState<SimulatedData[]>([]);
+  const [simConfig, setSimConfig] = useState<SimulationConfig>({
+    tempMin: 22,
+    tempMax: 30,
+    gasMin: 150,
+    gasMax: 500
+  });
   const [simulator] = useState(() => new ESP32Simulator((data) => {
     setSimLogs(prev => [data, ...prev].slice(0, 20));
   }));
+  const [lastNotificationTime, setLastNotificationTime] = useState<number>(0);
+  const [lastRiskLevel, setLastRiskLevel] = useState<string>('Normal');
+
+  const handleLogin = () => {
+    localStorage.setItem('esp32_auth', 'true');
+    setIsAuthenticated(true);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('esp32_auth');
+    setIsAuthenticated(false);
+    setIsSettingsOpen(false);
+  };
+
+  // Update simulator config when state changes
+  useEffect(() => {
+    simulator.setConfig(simConfig);
+  }, [simConfig, simulator]);
+
+  // Risk Analysis Logic (duplicated from RiskAnalysis component for monitoring)
+  const getRiskLevel = (temp: number, ppm: number) => {
+    const getTempRisk = (t: number) => {
+      if (t >= 18 && t <= 30) return 0; // Normal
+      if ((t > 30 && t <= 40) || (t >= 10 && t < 18)) return 1; // Low
+      if ((t > 40 && t <= 50) || (t >= 0 && t < 10)) return 2; // Medium
+      return 3; // Dangerous
+    };
+    const getGasRisk = (p: number) => {
+      if (p < 200) return 0;
+      if (p >= 200 && p < 400) return 1;
+      if (p >= 400 && p < 800) return 2;
+      return 3;
+    };
+    const levels = ['Normal', 'Low Risk', 'Medium Risk', 'Dangerous'];
+    const maxRisk = Math.max(getTempRisk(temp), getGasRisk(ppm));
+    return levels[maxRisk];
+  };
+
+  // Notification Monitor
+  useEffect(() => {
+    if (logs.length === 0 || !isAuthenticated) return;
+    const current = logs[0];
+    const currentRisk = getRiskLevel(current.temperature, current.gas);
+    
+    // Only notify if risk is Medium or Dangerous AND it's a new risk level OR 5 mins have passed
+    const isHighRisk = currentRisk === 'Medium Risk' || currentRisk === 'Dangerous';
+    const isNewRisk = currentRisk !== lastRiskLevel;
+    const cooldownPeriod = 5 * 60 * 1000; // 5 minutes
+    const now = Date.now();
+
+    if (isHighRisk && (isNewRisk || (now - lastNotificationTime > cooldownPeriod))) {
+      console.log(`[App] High risk detected (${currentRisk}). Sending notification...`);
+      
+      fetch('/api/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          level: currentRisk,
+          temperature: current.temperature,
+          gas: current.gas,
+          timestamp: Date.now()
+        })
+      }).catch(err => console.error("Notification error:", err));
+
+      setLastNotificationTime(now);
+      setLastRiskLevel(currentRisk);
+    } else if (!isHighRisk) {
+      setLastRiskLevel(currentRisk);
+    }
+  }, [logs, lastNotificationTime, lastRiskLevel, isAuthenticated]);
 
   // Firestore listeners
   useEffect(() => {
+    if (!isAuthenticated) {
+      setIsLoading(false);
+      return;
+    }
+
     // Listen to settings
     const settingsUnsubscribe = onSnapshot(doc(db, 'settings', 'logging'), (snapshot) => {
       if (snapshot.exists()) {
@@ -63,17 +151,17 @@ export default function App() {
       settingsUnsubscribe();
       logsUnsubscribe();
     };
-  }, []);
+  }, [isAuthenticated]);
 
   // Mock Data Simulation (for testing without real ESP32)
   useEffect(() => {
-    if (isSimulating && settings?.isLogging) {
+    if (isSimulating && settings?.isLogging && isAuthenticated) {
       simulator.start(settings.interval);
     } else {
       simulator.stop();
     }
     return () => simulator.stop();
-  }, [isSimulating, settings?.isLogging, settings?.interval]);
+  }, [isSimulating, settings?.isLogging, settings?.interval, isAuthenticated]);
 
   if (isLoading) {
     return (
@@ -81,6 +169,10 @@ export default function App() {
         <RefreshCw className="text-emerald-500 animate-spin" size={48} />
       </div>
     );
+  }
+
+  if (!isAuthenticated) {
+    return <LoginPage onLogin={handleLogin} />;
   }
 
   return (
@@ -115,6 +207,13 @@ export default function App() {
                 <span className="text-sm font-mono">{settings?.isLogging ? 'ACTIVE' : 'IDLE'}</span>
               </div>
             </div>
+            <div className="h-10 w-[1px] bg-white/10 hidden md:block"></div>
+            <button
+              onClick={() => setIsSettingsOpen(true)}
+              className="p-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl transition-all text-white/60 hover:text-white group"
+            >
+              <Settings className="group-hover:rotate-90 transition-transform duration-500" size={24} />
+            </button>
           </div>
         </header>
 
@@ -147,6 +246,9 @@ export default function App() {
           </div>
         </div>
 
+        {/* Risk Analysis */}
+        <RiskAnalysis currentData={logs[0]} />
+
         {/* Controls */}
         <LoggingControls settings={settings} />
 
@@ -176,6 +278,16 @@ export default function App() {
           <p>© 2026 ESP32 Sensor Hub • Powered by Firebase Studio</p>
         </footer>
       </div>
+
+      {/* Settings Panel */}
+      <SettingsPanel
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        onLogout={handleLogout}
+        simConfig={simConfig}
+        onSimConfigChange={(newConfig) => setSimConfig(prev => ({ ...prev, ...newConfig }))}
+        isSimulating={isSimulating}
+      />
     </div>
   );
 }
