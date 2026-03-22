@@ -171,42 +171,71 @@ async function startServer() {
         console.log(`[Server] ESP32 Data received but logging is OFF:`, { temperature: tempNum, gas: gasNum });
       }
 
-      // 4. Perform Risk Analysis & Notifications (Server-side) - ALWAYS check for risk
+      // 4. Perform Risk Analysis & Notifications (Server-side)
       const riskLevel = getRiskLevel(tempNum, gasNum);
+      console.log(`[Server] Risk Analysis: Temp=${tempNum}, Gas=${gasNum} => RiskLevel=${riskLevel}`);
       
-      if (riskLevel === 'Dangerous' || riskLevel === 'Medium Risk') {
-        // We always notify for high risk levels even if logging is off, 
-        // as these are critical safety alerts.
-        const lastSentRef = ref(db, 'settings/notifications/lastSent');
-        const lastSentSnap = await get(lastSentRef);
-        const lastSent = lastSentSnap.exists() ? lastSentSnap.val() : 0;
-        
-        const now = Date.now();
-        const frequency = settings.notificationFrequency || 'minute';
-        const cooldowns: Record<string, number> = {
-          minute: 60 * 1000,
-          hour: 60 * 60 * 1000,
-          day: 24 * 60 * 60 * 1000
-        };
-        
-        if (now - lastSent > cooldowns[frequency]) {
-          console.log(`[Server] Alert condition met (${riskLevel}). Sending notification...`);
-          
-          // Construct notification payload
-          const payload = {
-            type: 'alert',
-            level: riskLevel,
-            temperature: tempNum,
-            gas: gasNum,
-            timestamp: now
-          };
+      const lastSentRef = ref(db, 'settings/notifications/lastSent');
+      const lastSentSnap = await get(lastSentRef);
+      const lastSent = lastSentSnap.exists() ? Number(lastSentSnap.val()) : 0;
+      
+      const now = Date.now();
+      const frequency = settings.notificationFrequency || 'minute';
+      const cooldowns: Record<string, number> = {
+        minute: 60 * 1000,
+        hour: 60 * 60 * 1000,
+        day: 24 * 60 * 60 * 1000
+      };
+      
+      const frequencyCooldown = cooldowns[frequency] || cooldowns.minute;
+      const timeSinceLast = now - lastSent;
+      
+      // LOGIC: 
+      // 1. Dangerous = Immediate (with 1-min anti-spam)
+      // 2. Others (Medium, Low, Normal) = Follow Frequency
+      
+      let shouldNotify = false;
+      let notificationType = 'alert';
+      
+      if (riskLevel === 'Dangerous') {
+        const dangerousCooldown = 60 * 1000; // 1 minute anti-spam for dangerous
+        if (timeSinceLast > dangerousCooldown) {
+          shouldNotify = true;
+          console.log(`[Server] IMMEDIATE ALERT: Dangerous level detected!`);
+        } else {
+          console.log(`[Server] Dangerous alert suppressed by 1-min anti-spam. Time since last: ${(timeSinceLast/1000).toFixed(1)}s`);
+        }
+      } else {
+        // For Normal, Medium, Low - follow the user-selected frequency
+        if (timeSinceLast > frequencyCooldown) {
+          shouldNotify = true;
+          notificationType = riskLevel === 'Normal' ? 'status_update' : 'alert';
+          console.log(`[Server] FREQUENCY UPDATE: Sending ${notificationType} (${riskLevel}) after ${frequency} cooldown.`);
+        } else {
+          // Only log check for non-normal or if it's been a while
+          if (riskLevel !== 'Normal' || timeSinceLast > frequencyCooldown * 0.9) {
+            console.log(`[Server] Notification skipped. Risk=${riskLevel}, Freq=${frequency}, TimeSinceLast=${(timeSinceLast/1000).toFixed(1)}s, Cooldown=${frequencyCooldown/1000}s`);
+          }
+        }
+      }
 
-          await triggerNotification(payload);
-          
+      if (shouldNotify) {
+        // Construct notification payload
+        const payload = {
+          type: notificationType,
+          level: riskLevel,
+          temperature: tempNum,
+          gas: gasNum,
+          timestamp: now
+        };
+
+        const success = await triggerNotification(payload);
+        console.log(`[Server] Notification (${notificationType}) success: ${success}`);
+        
+        if (success) {
           // Update last sent time
           await set(lastSentRef, now);
-        } else {
-          console.log(`[Server] Alert skipped due to cooldown (${frequency}). Last sent: ${new Date(lastSent).toLocaleString()}`);
+          console.log(`[Server] LastSent updated to: ${new Date(now).toLocaleString()}`);
         }
       }
 
@@ -233,16 +262,17 @@ async function startServer() {
     const timestamp = payload.timestamp || Date.now();
     let message = "";
     
-    if (type === 'alert') {
-      const emoji = level === 'Dangerous' ? '🚨' : '⚠️';
+    if (type === 'alert' || type === 'status_update') {
+      const emoji = type === 'status_update' ? '📊' : (level === 'Dangerous' ? '🚨' : '⚠️');
+      const title = type === 'status_update' ? 'PERIODIC STATUS UPDATE' : `SENSOR ALERT: ${level}`;
       const tempStr = typeof temperature === 'number' ? temperature.toFixed(2) : (Number(temperature)?.toFixed(2) ?? '0.00');
       const gasStr = typeof gas === 'number' ? gas.toFixed(0) : (Number(gas)?.toFixed(0) ?? '0');
       
-      message = `${emoji} <b>SENSOR ALERT: ${level}</b>\n\n` +
+      message = `${emoji} <b>${title}</b>\n\n` +
                 `<b>Time:</b> ${new Date(timestamp).toLocaleString()}\n` +
                 `<b>Temp:</b> ${tempStr}°C\n` +
                 `<b>Gas:</b> ${gasStr} PPM\n\n` +
-                `<i>Please check the dashboard immediately.</i>`;
+                (type === 'alert' ? `<i>Please check the dashboard immediately.</i>` : `<i>System is currently ${level.toLowerCase()}.</i>`);
     } else if (type === 'status') {
       const emoji = level === 'Connected' ? '✅' : '❌';
       message = `${emoji} <b>SYSTEM STATUS: ${level}</b>\n\n` +
@@ -256,6 +286,8 @@ async function startServer() {
     }
 
     if (!message) return false;
+
+    console.log(`[Server] Final notification message to send:\n${message}`);
 
     const success = await sendTelegramMessage(message);
     
