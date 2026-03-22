@@ -36,8 +36,8 @@ export function App() {
   const [simConfig, setSimConfig] = useState<SimulationConfig>({
     tempMin: 22,
     tempMax: 30,
-    gasMin: 150,
-    gasMax: 500,
+    gasMin: 200,
+    gasMax: 6000,
     noise: 0.5
   });
   const [simulator] = useState(() => new ESP32Simulator((data) => {
@@ -135,10 +135,10 @@ export function App() {
       return 3; // Dangerous
     };
     const getGasRisk = (p: number) => {
-      if (p < 200) return 0;
-      if (p >= 200 && p < 400) return 1;
-      if (p >= 400 && p < 800) return 2;
-      return 3;
+      if (p < 400) return 0; // Clean Air (200-400)
+      if (p >= 400 && p < 1000) return 1; // Normal Indoor (300-800)
+      if (p >= 1000 && p < 5000) return 2; // Smoke Detected (1000-5000)
+      return 3; // Gas Leak (5000+)
     };
     const levels = ['Normal', 'Low Risk', 'Medium Risk', 'Dangerous'];
     const maxRisk = Math.max(getTempRisk(temp), getGasRisk(ppm));
@@ -501,43 +501,43 @@ export function App() {
             <div className="flex flex-wrap gap-3">
               <button
                 onClick={() => {
-                  setManualData({ temperature: 25, gas: 100 });
+                  setManualData({ temperature: 25, gas: 300 });
                   setTimeout(handleManualInput, 100);
                 }}
                 disabled={!settings?.isLogging}
                 className="px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-emerald-400 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all disabled:opacity-20"
               >
-                Normal
+                Clean Air
               </button>
               <button
                 onClick={() => {
-                  setManualData({ temperature: 45, gas: 150 });
+                  setManualData({ temperature: 26, gas: 600 });
+                  setTimeout(handleManualInput, 100);
+                }}
+                disabled={!settings?.isLogging}
+                className="px-4 py-2 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 text-blue-400 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all disabled:opacity-20"
+              >
+                Normal Indoor
+              </button>
+              <button
+                onClick={() => {
+                  setManualData({ temperature: 35, gas: 2500 });
                   setTimeout(handleManualInput, 100);
                 }}
                 disabled={!settings?.isLogging}
                 className="px-4 py-2 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all disabled:opacity-20"
               >
-                High Temp
+                Smoke Detected
               </button>
               <button
                 onClick={() => {
-                  setManualData({ temperature: 28, gas: 850 });
-                  setTimeout(handleManualInput, 100);
-                }}
-                disabled={!settings?.isLogging}
-                className="px-4 py-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all disabled:opacity-20"
-              >
-                Gas Leak
-              </button>
-              <button
-                onClick={() => {
-                  setManualData({ temperature: 65, gas: 1200 });
+                  setManualData({ temperature: 28, gas: 6500 });
                   setTimeout(handleManualInput, 100);
                 }}
                 disabled={!settings?.isLogging}
                 className="px-4 py-2 bg-red-600/20 hover:bg-red-600/30 border border-red-600/30 text-red-500 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all disabled:opacity-20 glow-red"
               >
-                Fire Alert
+                Gas Leak
               </button>
             </div>
           </div>

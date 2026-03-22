@@ -11,13 +11,28 @@ dotenv.config();
 
 // Load Firebase config from the same source as the client
 const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
-let fbConfig = {};
-try {
-  if (fs.existsSync(configPath)) {
-    fbConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+let fbConfig: any = {};
+
+// Try to load from environment variables first (best for Vercel)
+if (process.env.FIREBASE_CONFIG) {
+  try {
+    fbConfig = JSON.parse(process.env.FIREBASE_CONFIG);
+    console.log("[Server] Firebase config loaded from environment variable.");
+  } catch (e) {
+    console.error("[Server] Failed to parse FIREBASE_CONFIG environment variable:", e);
   }
-} catch (err) {
-  console.error("[Server] Failed to load firebase-applet-config.json:", err);
+}
+
+// Fallback to file if environment variable is missing or failed
+if (Object.keys(fbConfig).length === 0) {
+  try {
+    if (fs.existsSync(configPath)) {
+      fbConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      console.log("[Server] Firebase config loaded from file.");
+    }
+  } catch (err) {
+    console.error("[Server] Failed to load firebase-applet-config.json:", err);
+  }
 }
 
 // Initialize Firebase for server-side logging
@@ -25,8 +40,8 @@ if (Object.keys(fbConfig).length === 0) {
   console.warn("[Server] Firebase configuration is empty. Firebase features will be disabled.");
 }
 const fbApp = initializeApp(fbConfig);
-// @ts-ignore - databaseURL might be in the config
-const db = getDatabase(fbApp, fbConfig.databaseURL);
+// @ts-ignore - databaseURL might be in the config or use default from projectId
+const db = getDatabase(fbApp, fbConfig.databaseURL || `https://${fbConfig.projectId}-default-rtdb.firebaseio.com/`);
 
 async function startServer() {
   const app = express();
@@ -99,11 +114,16 @@ async function startServer() {
     const chatId = process.env.TELEGRAM_CHAT_ID;
 
     if (!token || !chatId) {
-      console.warn("[Server] Telegram configuration missing. Skipping notification.");
+      console.warn("[Server] Telegram configuration missing (TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID). Skipping notification.");
       return false;
     }
 
     try {
+      // Check if fetch is available (Node 18+)
+      if (typeof fetch === 'undefined') {
+        throw new Error("Global fetch is not available. Please ensure you are using Node.js 18 or higher.");
+      }
+
       const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -116,14 +136,14 @@ async function startServer() {
       
       if (!response.ok) {
         const error = await response.text();
-        console.error("[Server] Telegram API error:", error);
+        console.error(`[Server] Telegram API error (${response.status}):`, error);
         return false;
       }
 
-      console.log("[Server] Telegram notification sent.");
+      console.log("[Server] Telegram notification sent successfully.");
       return true;
-    } catch (error) {
-      console.error("[Server] Failed to send Telegram message:", error);
+    } catch (error: any) {
+      console.error("[Server] Failed to send Telegram message:", error.message || error);
       return false;
     }
   };

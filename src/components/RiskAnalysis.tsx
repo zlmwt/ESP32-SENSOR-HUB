@@ -31,12 +31,20 @@ export const RiskAnalysis: React.FC<RiskAnalysisProps> = ({ currentData }) => {
   };
 
   const getGasRisk = (ppm: number): RiskLevel => {
-    if (ppm < 200) return 'Normal';
-    if (ppm >= 200 && ppm < 400) return 'Low Risk';
-    if (ppm >= 400 && ppm < 800) return 'Medium Risk';
-    return 'Dangerous';
+    if (ppm < 400) return 'Normal'; // Clean Air (200-400)
+    if (ppm >= 400 && ppm < 1000) return 'Low Risk'; // Normal Indoor (300-800)
+    if (ppm >= 1000 && ppm < 5000) return 'Medium Risk'; // Smoke Detected (1000-5000)
+    return 'Dangerous'; // Gas Leak (5000+)
   };
 
+  const getGasCategory = (ppm: number): string => {
+    if (ppm < 400) return 'Clean Air';
+    if (ppm >= 400 && ppm < 1000) return 'Normal Indoor';
+    if (ppm >= 1000 && ppm < 5000) return 'Smoke Detected';
+    return 'Gas Leak';
+  };
+
+  const gasCategory = getGasCategory(gas);
   const tempRisk = getTemperatureRisk(temperature);
   const gasRisk = getGasRisk(gas);
 
@@ -129,8 +137,8 @@ export const RiskAnalysis: React.FC<RiskAnalysisProps> = ({ currentData }) => {
                   layout
                   className={`flex flex-col items-end px-4 py-2 rounded-xl border ${gasRisk === 'Normal' ? 'border-emerald-500/50 bg-emerald-500/10' : 'border-red-500/50 bg-red-500/10'}`}
                 >
-                  <span className="text-[8px] font-black text-white/60 uppercase tracking-widest">Gas Level</span>
-                  <span className={`text-xs font-mono font-bold ${gasRisk === 'Normal' ? 'text-emerald-400' : 'text-red-400'}`}>{gasRisk}</span>
+                  <span className="text-[8px] font-black text-white/60 uppercase tracking-widest">Gas Status</span>
+                  <span className={`text-xs font-mono font-bold ${gasRisk === 'Normal' ? 'text-emerald-400' : 'text-red-400'}`}>{gasCategory}</span>
                 </motion.div>
               </div>
             </div>
@@ -168,8 +176,8 @@ export const RiskAnalysis: React.FC<RiskAnalysisProps> = ({ currentData }) => {
                   <p className="text-[10px] text-white/60 uppercase font-black tracking-widest">Gas Level</p>
                 </div>
                 <p className="text-sm text-white/80 font-medium">
-                  Gas level <span className="text-amber-400 font-mono font-bold">{gas?.toFixed(0) ?? '0'} PPM</span> is {gasRisk.toLowerCase()}.
-                  {gasRisk === 'Normal' ? ' Air quality is clean and safe.' : ' Please ensure proper ventilation.'}
+                  Gas level <span className="text-amber-400 font-mono font-bold">{gas?.toFixed(0) ?? '0'} PPM</span> is categorized as <span className="font-bold">{gasCategory}</span>.
+                  {gasRisk === 'Normal' ? ' Air quality is clean and safe.' : ' Please take appropriate precautions.'}
                 </p>
               </motion.div>
             </div>
