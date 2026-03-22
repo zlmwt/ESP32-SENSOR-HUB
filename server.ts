@@ -93,52 +93,103 @@ async function startServer() {
     }
   });
 
-  // Email Notification API
-  app.post("/api/notify", async (req, res) => {
-    const { level, temperature, gas, timestamp } = req.body;
+  // Helper for Telegram Notifications
+  const sendTelegramMessage = async (message: string) => {
+    const token = process.env.TELEGRAM_BOT_TOKEN;
+    const chatId = process.env.TELEGRAM_CHAT_ID;
 
-    if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
-      console.warn("[Server] Email configuration missing. Skipping notification.");
-      return res.status(500).json({ error: "Email configuration missing" });
+    if (!token || !chatId) {
+      console.warn("[Server] Telegram configuration missing. Skipping notification.");
+      return false;
     }
 
     try {
-      const transporter = nodemailer.createTransport({
-        host: process.env.SMTP_HOST || "smtp.gmail.com",
-        port: parseInt(process.env.SMTP_PORT || "587"),
-        secure: false, // true for 465, false for other ports
-        auth: {
-          user: process.env.SMTP_USER,
-          pass: process.env.SMTP_PASS,
-        },
+      const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: message,
+          parse_mode: 'HTML'
+        })
       });
+      
+      if (!response.ok) {
+        const error = await response.text();
+        console.error("[Server] Telegram API error:", error);
+        return false;
+      }
 
-      const mailOptions = {
-        from: `"ESP32 Sensor Hub" <${process.env.SMTP_USER}>`,
-        to: process.env.NOTIFICATION_EMAIL || process.env.SMTP_USER,
-        subject: `⚠️ SENSOR ALERT: ${level} Detected!`,
-        html: `
-          <div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
-            <h2 style="color: ${level === 'Dangerous' ? '#ef4444' : '#f97316'};">
-              ${level} Alert Detected
-            </h2>
-            <p><strong>Time:</strong> ${new Date(timestamp).toLocaleString()}</p>
-            <p><strong>Temperature:</strong> ${temperature.toFixed(2)}°C</p>
-            <p><strong>Gas Concentration:</strong> ${gas.toFixed(0)} PPM</p>
-            <hr />
-            <p style="color: #666; font-size: 12px;">
-              This is an automated alert from your ESP32 Sensor Hub. Please check the dashboard for more details.
-            </p>
-          </div>
-        `,
-      };
-
-      await transporter.sendMail(mailOptions);
-      console.log(`[Server] Notification email sent for ${level} risk.`);
-      res.json({ success: true });
+      console.log("[Server] Telegram notification sent.");
+      return true;
     } catch (error) {
-      console.error("[Server] Failed to send email:", error);
-      res.status(500).json({ error: "Failed to send email" });
+      console.error("[Server] Failed to send Telegram message:", error);
+      return false;
+    }
+  };
+
+  // Notification API (Updated for Telegram and Frequency)
+  app.post("/api/notify", async (req, res) => {
+    const { type, level, temperature, gas, timestamp, frequency = 'minute' } = req.body;
+
+    // Check frequency (simple in-memory check for demo, ideally should be in DB)
+    // For this app, we'll just send it and let the client handle the throttling logic
+    // or implement a simple server-side throttle if needed.
+    // However, the request says "in the web there is a setting", so the client will pass the frequency.
+    
+    let message = "";
+    if (type === 'alert') {
+      const emoji = level === 'Dangerous' ? '🚨' : '⚠️';
+      message = `${emoji} <b>SENSOR ALERT: ${level}</b>\n\n` +
+                `<b>Time:</b> ${new Date(timestamp).toLocaleString()}\n` +
+                `<b>Temp:</b> ${temperature.toFixed(2)}°C\n` +
+                `<b>Gas:</b> ${gas.toFixed(0)} PPM\n\n` +
+                `<i>Please check the dashboard immediately.</i>`;
+    } else if (type === 'status') {
+      const emoji = level === 'Connected' ? '✅' : '❌';
+      message = `${emoji} <b>SYSTEM STATUS: ${level}</b>\n\n` +
+                `<b>Time:</b> ${new Date(timestamp).toLocaleString()}\n` +
+                `The ESP32 has been <b>${level.toLowerCase()}</b>.`;
+    } else if (type === 'logging') {
+      const emoji = level === 'Started' ? '⏺️' : '⏹️';
+      message = `${emoji} <b>LOGGING STATUS: ${level}</b>\n\n` +
+                `<b>Time:</b> ${new Date(timestamp).toLocaleString()}\n` +
+                `Data recording has <b>${level.toLowerCase()}</b>.`;
+    }
+
+    if (!message) return res.status(400).json({ error: "Invalid notification type" });
+
+    const success = await sendTelegramMessage(message);
+    
+    // Also try email if configured
+    if (process.env.SMTP_USER && process.env.SMTP_PASS && type === 'alert') {
+      try {
+        const transporter = nodemailer.createTransport({
+          host: process.env.SMTP_HOST || "smtp.gmail.com",
+          port: parseInt(process.env.SMTP_PORT || "587"),
+          secure: false,
+          auth: {
+            user: process.env.SMTP_USER,
+            pass: process.env.SMTP_PASS,
+          },
+        });
+
+        const mailOptions = {
+          from: `"ESP32 Sensor Hub" <${process.env.SMTP_USER}>`,
+          to: process.env.NOTIFICATION_EMAIL || process.env.SMTP_USER,
+          subject: `⚠️ SENSOR ALERT: ${level} Detected!`,
+          html: `<div style="font-family: sans-serif; padding: 20px;"><h2>${level} Alert</h2><p>${message.replace(/\n/g, '<br>')}</p></div>`,
+        };
+        await transporter.sendMail(mailOptions);
+      } catch (e) {
+        console.error("[Server] Email failed:", e);
+      }
+    }
+
+    if (success) {
+      res.json({ success: true });
+    } else {
+      res.status(500).json({ error: "Failed to send notification" });
     }
   });
 

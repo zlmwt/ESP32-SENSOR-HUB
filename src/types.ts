@@ -5,8 +5,11 @@ export interface SensorData {
   timestamp: any; // Firestore Timestamp
 }
 
+export type NotificationFrequency = 'minute' | 'hour' | 'day';
+
 export interface LoggingSettings {
   isLogging: boolean;
   interval: number;
+  notificationFrequency: NotificationFrequency;
   lastUpdated: any; // Firestore Timestamp
 }

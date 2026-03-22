@@ -1,6 +1,7 @@
 import React from 'react';
-import { AlertTriangle, CheckCircle, AlertCircle, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, CheckCircle, AlertCircle, ShieldAlert, Thermometer, Wind } from 'lucide-react';
 import { SensorData } from '../types';
+import { motion, AnimatePresence } from 'motion/react';
 
 interface RiskAnalysisProps {
   currentData: SensorData | undefined;
@@ -86,47 +87,95 @@ export const RiskAnalysis: React.FC<RiskAnalysisProps> = ({ currentData }) => {
   const config = riskConfig[overallRiskLevel];
 
   return (
-    <div className={`rounded-2xl p-6 border ${config.borderColor} ${config.bgColor} backdrop-blur-md shadow-xl mb-8 transition-all duration-500`}>
-      <div className="flex items-start gap-4">
-        <div className="p-3 rounded-xl bg-white/5 border border-white/10">
-          {config.icon}
-        </div>
-        <div className="flex-1">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className={`text-xl font-bold ${config.color} uppercase tracking-wider`}>
-              Overall Status: {config.level}
-            </h3>
-            <div className="flex gap-2">
-              <span className={`text-[10px] px-2 py-1 rounded-full border ${tempRisk === 'Normal' ? 'border-emerald-500/30 text-emerald-400' : tempRisk === 'Low Risk' ? 'border-amber-500/30 text-amber-400' : tempRisk === 'Medium Risk' ? 'border-orange-500/30 text-orange-400' : 'border-red-500/30 text-red-400'} bg-black/20`}>
-                TEMP: {tempRisk}
-              </span>
-              <span className={`text-[10px] px-2 py-1 rounded-full border ${gasRisk === 'Normal' ? 'border-emerald-500/30 text-emerald-400' : gasRisk === 'Low Risk' ? 'border-amber-500/30 text-amber-400' : gasRisk === 'Medium Risk' ? 'border-orange-500/30 text-orange-400' : 'border-red-500/30 text-red-400'} bg-black/20`}>
-                GAS: {gasRisk}
-              </span>
+    <AnimatePresence mode="wait">
+      <motion.div 
+        key={overallRiskLevel}
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -20 }}
+        transition={{ type: 'spring', stiffness: 100, damping: 20 }}
+        className={`rounded-3xl p-8 border ${config.borderColor} ${config.bgColor} glass-card shadow-2xl mb-12 relative overflow-hidden group transition-all duration-700`}
+      >
+        {/* Animated scanline effect */}
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-white/[0.02] to-transparent h-[200%] w-full animate-scanline pointer-events-none" />
+        
+        <div className="flex flex-col md:flex-row items-start gap-8 relative z-10">
+          <motion.div 
+            initial={{ scale: 0.8, rotate: -10 }}
+            animate={{ scale: 1, rotate: 0 }}
+            className={`p-5 rounded-2xl bg-white/5 border border-white/10 ${config.color.replace('text-', 'glow-')} shadow-lg`}
+          >
+            {config.icon}
+          </motion.div>
+          <div className="flex-1 w-full">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+              <div>
+                <h3 className={`text-3xl font-black ${config.color} uppercase tracking-tighter italic`}>
+                  {config.level} <span className="text-white/40 not-italic font-normal ml-2">Status</span>
+                </h3>
+                <p className="text-white/60 text-xs font-mono uppercase tracking-[0.3em] mt-1">
+                  Safety Status
+                </p>
+              </div>
+              <div className="flex gap-3">
+                <motion.div 
+                  layout
+                  className={`flex flex-col items-end px-4 py-2 rounded-xl border ${tempRisk === 'Normal' ? 'border-emerald-500/50 bg-emerald-500/10' : 'border-red-500/50 bg-red-500/10'}`}
+                >
+                  <span className="text-[8px] font-black text-white/60 uppercase tracking-widest">Temperature</span>
+                  <span className={`text-xs font-mono font-bold ${tempRisk === 'Normal' ? 'text-emerald-400' : 'text-red-400'}`}>{tempRisk}</span>
+                </motion.div>
+                <motion.div 
+                  layout
+                  className={`flex flex-col items-end px-4 py-2 rounded-xl border ${gasRisk === 'Normal' ? 'border-emerald-500/50 bg-emerald-500/10' : 'border-red-500/50 bg-red-500/10'}`}
+                >
+                  <span className="text-[8px] font-black text-white/60 uppercase tracking-widest">Gas Level</span>
+                  <span className={`text-xs font-mono font-bold ${gasRisk === 'Normal' ? 'text-emerald-400' : 'text-red-400'}`}>{gasRisk}</span>
+                </motion.div>
+              </div>
+            </div>
+            
+            <motion.div 
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              className="glass-card bg-black/40 rounded-2xl p-6 border-white/10 mb-8"
+            >
+              <p className="text-white/90 text-lg font-medium leading-relaxed italic">
+                "{config.message}"
+              </p>
+            </motion.div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <motion.div 
+                whileHover={{ scale: 1.02, x: 5 }}
+                className="glass-card bg-white/5 rounded-2xl p-5 border-white/10 group/card hover:bg-white/10 transition-all"
+              >
+                <div className="flex items-center gap-3 mb-3">
+                  <Thermometer size={16} className="text-emerald-400" />
+                  <p className="text-[10px] text-white/60 uppercase font-black tracking-widest">Temperature</p>
+                </div>
+                <p className="text-sm text-white/80 font-medium">
+                  Current reading <span className="text-emerald-400 font-mono font-bold">{temperature.toFixed(1)}°C</span> is {tempRisk.toLowerCase()}. 
+                  {tempRisk === 'Normal' ? ' Temperature is stable and safe.' : ' Please check the room temperature.'}
+                </p>
+              </motion.div>
+              <motion.div 
+                whileHover={{ scale: 1.02, x: 5 }}
+                className="glass-card bg-white/5 rounded-2xl p-5 border-white/10 group/card hover:bg-white/10 transition-all"
+              >
+                <div className="flex items-center gap-3 mb-3">
+                  <Wind size={16} className="text-amber-400" />
+                  <p className="text-[10px] text-white/60 uppercase font-black tracking-widest">Gas Level</p>
+                </div>
+                <p className="text-sm text-white/80 font-medium">
+                  Gas level <span className="text-amber-400 font-mono font-bold">{gas.toFixed(0)} PPM</span> is {gasRisk.toLowerCase()}.
+                  {gasRisk === 'Normal' ? ' Air quality is clean and safe.' : ' Please ensure proper ventilation.'}
+                </p>
+              </motion.div>
             </div>
           </div>
-          <p className="text-white/70 text-sm leading-relaxed">
-            {config.message}
-          </p>
-          
-          <div className="mt-4 grid grid-cols-2 gap-4">
-            <div className="bg-black/20 rounded-lg p-3 border border-white/5">
-              <p className="text-[10px] text-white/30 uppercase font-bold mb-1">Temperature Analysis</p>
-              <p className="text-xs text-white/60">
-                {temperature.toFixed(1)}°C is {tempRisk.toLowerCase()}. 
-                {tempRisk === 'Normal' ? ' Ideal for standard operation.' : ' Check environmental controls.'}
-              </p>
-            </div>
-            <div className="bg-black/20 rounded-lg p-3 border border-white/5">
-              <p className="text-[10px] text-white/30 uppercase font-bold mb-1">Gas Analysis</p>
-              <p className="text-xs text-white/60">
-                {gas.toFixed(0)} PPM is {gasRisk.toLowerCase()}.
-                {gasRisk === 'Normal' ? ' Air quality is clean.' : ' Ensure proper ventilation.'}
-              </p>
-            </div>
-          </div>
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </AnimatePresence>
   );
 };

@@ -15,7 +15,7 @@ export const SimulationSettings: React.FC<SimulationSettingsProps> = ({ config, 
         <div className="p-2 bg-indigo-500/20 rounded-lg">
           <Settings2 className="text-indigo-400" size={24} />
         </div>
-        <h2 className="text-xl font-bold text-white">Simulation Customization</h2>
+        <h2 className="text-xl font-bold text-white">Test Mode Settings</h2>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -81,7 +81,7 @@ export const SimulationSettings: React.FC<SimulationSettingsProps> = ({ config, 
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2 text-white/60 text-sm font-medium uppercase tracking-wider">
             <Settings2 size={16} />
-            <span>Noise / Variability Factor</span>
+            <span>Data Randomness</span>
           </div>
           <span className="text-indigo-400 font-mono text-sm">{(config.noise * 100).toFixed(0)}%</span>
         </div>
@@ -95,16 +95,16 @@ export const SimulationSettings: React.FC<SimulationSettingsProps> = ({ config, 
           className="w-full h-2 bg-black/40 rounded-lg appearance-none cursor-pointer accent-indigo-500"
         />
         <div className="flex justify-between mt-2 text-[10px] text-white/30 uppercase tracking-tighter">
-          <span>Stable (Midpoint)</span>
-          <span>Realistic</span>
-          <span>Extreme (Full Range)</span>
+          <span>Steady</span>
+          <span>Normal</span>
+          <span>High Variation</span>
         </div>
       </div>
 
       {!isSimulating && (
         <div className="mt-6 p-4 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl text-indigo-300 text-xs flex items-center gap-3">
           <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
-          Simulation is currently inactive. Start simulation above to see these ranges in action.
+          Test mode is currently off. Start it above to see these ranges in action.
         </div>
       )}
     </div>
