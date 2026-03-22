@@ -3,7 +3,7 @@ import nodemailer from "nodemailer";
 import path from "path";
 import dotenv from "dotenv";
 import { initializeApp } from 'firebase/app';
-import { getDatabase, ref, push, serverTimestamp } from 'firebase/database';
+import { getDatabase, ref, push, serverTimestamp, get, set, query as dbQuery, orderByChild, limitToLast } from 'firebase/database';
 import fs from 'fs';
 import { createServer as createViteServer } from "vite";
 
@@ -54,6 +54,25 @@ async function startServer() {
     res.json({ status: "ok", time: new Date().toISOString() });
   });
 
+  // Helper for Risk Analysis (Server-side)
+  const getRiskLevel = (temp: number, ppm: number) => {
+    const getTempRisk = (t: number) => {
+      if (t >= 18 && t <= 30) return 0; // Normal
+      if ((t > 30 && t <= 40) || (t >= 10 && t < 18)) return 1; // Low
+      if ((t > 40 && t <= 50) || (t >= 0 && t < 10)) return 2; // Medium
+      return 3; // Dangerous
+    };
+    const getGasRisk = (p: number) => {
+      if (p < 400) return 0; // Clean Air (200-400)
+      if (p >= 400 && p < 1000) return 1; // Normal Indoor (300-800)
+      if (p >= 1000 && p < 5000) return 2; // Smoke Detected (1000-5000)
+      return 3; // Gas Leak (5000+)
+    };
+    const levels = ['Normal', 'Low Risk', 'Medium Risk', 'Dangerous'];
+    const maxRisk = Math.max(getTempRisk(temp), getGasRisk(ppm));
+    return levels[maxRisk];
+  };
+
   // ESP32 Data Logging API
   app.post("/api/esp32/log", async (req, res) => {
     const { temperature, gas } = req.body;
@@ -84,14 +103,81 @@ async function startServer() {
     }
 
     try {
+      // 1. Log the data
       const logsRef = ref(db, 'sensor_logs');
+      
+      // Get last log to check for reconnection
+      const lastLogQuery = dbQuery(logsRef, orderByChild('timestamp'), limitToLast(1));
+      const lastLogSnap = await get(lastLogQuery);
+      let lastLogTime = 0;
+      if (lastLogSnap.exists()) {
+        const lastLog = Object.values(lastLogSnap.val())[0] as any;
+        lastLogTime = lastLog.timestamp || 0;
+      }
+
       const newLogRef = await push(logsRef, {
         temperature: tempNum,
         gas: gasNum,
         timestamp: serverTimestamp()
       });
       
+      const now = Date.now();
       console.log(`[Server] ESP32 Data logged:`, { temperature: tempNum, gas: gasNum, id: newLogRef.key });
+
+      // 2. Check for Reconnection (if gap > 5 minutes)
+      if (lastLogTime > 0 && (now - lastLogTime > 5 * 60 * 1000)) {
+        console.log("[Server] System reconnected after a gap. Sending status notification...");
+        await triggerNotification({
+          type: 'status',
+          level: 'Connected',
+          timestamp: now
+        });
+      }
+
+      // 3. Perform Risk Analysis & Notifications (Server-side)
+      const riskLevel = getRiskLevel(tempNum, gasNum);
+      
+      if (riskLevel === 'Dangerous' || riskLevel === 'Medium Risk') {
+        const settingsRef = ref(db, 'settings/logging');
+        const settingsSnap = await get(settingsRef);
+        const settings = settingsSnap.exists() ? settingsSnap.val() : { isLogging: true, notificationFrequency: 'minute' };
+
+        if (settings.isLogging) {
+          const lastSentRef = ref(db, 'settings/notifications/lastSent');
+          const lastSentSnap = await get(lastSentRef);
+          const lastSent = lastSentSnap.exists() ? lastSentSnap.val() : 0;
+          
+          const now = Date.now();
+          const frequency = settings.notificationFrequency || 'minute';
+          const cooldowns: Record<string, number> = {
+            minute: 60 * 1000,
+            hour: 60 * 60 * 1000,
+            day: 24 * 60 * 60 * 1000
+          };
+          
+          if (now - lastSent > cooldowns[frequency]) {
+            console.log(`[Server] Alert condition met (${riskLevel}). Sending notification...`);
+            
+            // Construct notification payload
+            const payload = {
+              type: 'alert',
+              level: riskLevel,
+              temperature: tempNum,
+              gas: gasNum,
+              timestamp: now
+            };
+
+            // Trigger notification (reusing the logic from /api/notify)
+            // We'll call the internal function directly or just duplicate the logic for simplicity in this file
+            // Let's move the notification logic to a helper function
+            await triggerNotification(payload);
+            
+            // Update last sent time
+            await set(lastSentRef, now);
+          }
+        }
+      }
+
       res.json({ 
         success: true, 
         id: newLogRef.key,
@@ -107,6 +193,64 @@ async function startServer() {
       });
     }
   });
+
+  // Helper to trigger notification (Telegram/Email)
+  const triggerNotification = async (payload: any) => {
+    const { type, level, temperature, gas, timestamp } = payload;
+    let message = "";
+    
+    if (type === 'alert') {
+      const emoji = level === 'Dangerous' ? '🚨' : '⚠️';
+      const tempStr = typeof temperature === 'number' ? temperature.toFixed(2) : (Number(temperature)?.toFixed(2) ?? '0.00');
+      const gasStr = typeof gas === 'number' ? gas.toFixed(0) : (Number(gas)?.toFixed(0) ?? '0');
+      
+      message = `${emoji} <b>SENSOR ALERT: ${level}</b>\n\n` +
+                `<b>Time:</b> ${new Date(timestamp).toLocaleString()}\n` +
+                `<b>Temp:</b> ${tempStr}°C\n` +
+                `<b>Gas:</b> ${gasStr} PPM\n\n` +
+                `<i>Please check the dashboard immediately.</i>`;
+    } else if (type === 'status') {
+      const emoji = level === 'Connected' ? '✅' : '❌';
+      message = `${emoji} <b>SYSTEM STATUS: ${level}</b>\n\n` +
+                `<b>Time:</b> ${new Date(timestamp).toLocaleString()}\n` +
+                `The ESP32 has been <b>${level.toLowerCase()}</b>.`;
+    } else if (type === 'logging') {
+      const emoji = level === 'Started' ? '⏺️' : '⏹️';
+      message = `${emoji} <b>LOGGING STATUS: ${level}</b>\n\n` +
+                `<b>Time:</b> ${new Date(timestamp).toLocaleString()}\n` +
+                `Data recording has <b>${level.toLowerCase()}</b>.`;
+    }
+
+    if (!message) return false;
+
+    const success = await sendTelegramMessage(message);
+    
+    // Also try email if configured
+    if (process.env.SMTP_USER && process.env.SMTP_PASS && type === 'alert') {
+      try {
+        const transporter = nodemailer.createTransport({
+          host: process.env.SMTP_HOST || "smtp.gmail.com",
+          port: parseInt(process.env.SMTP_PORT || "587"),
+          secure: false,
+          auth: {
+            user: process.env.SMTP_USER,
+            pass: process.env.SMTP_PASS,
+          },
+        });
+
+        const mailOptions = {
+          from: `"ESP32 Sensor Hub" <${process.env.SMTP_USER}>`,
+          to: process.env.NOTIFICATION_EMAIL || process.env.SMTP_USER,
+          subject: `⚠️ SENSOR ALERT: ${level} Detected!`,
+          html: `<div style="font-family: sans-serif; padding: 20px;"><h2>${level} Alert</h2><p>${message.replace(/\n/g, '<br>')}</p></div>`,
+        };
+        await transporter.sendMail(mailOptions);
+      } catch (e) {
+        console.error("[Server] Email failed:", e);
+      }
+    }
+    return success;
+  };
 
   // Helper for Telegram Notifications
   const sendTelegramMessage = async (message: string) => {
@@ -150,65 +294,8 @@ async function startServer() {
 
   // Notification API (Updated for Telegram and Frequency)
   app.post("/api/notify", async (req, res) => {
-    const { type, level, temperature, gas, timestamp, frequency = 'minute' } = req.body;
-
-    // Check frequency (simple in-memory check for demo, ideally should be in DB)
-    // For this app, we'll just send it and let the client handle the throttling logic
-    // or implement a simple server-side throttle if needed.
-    // However, the request says "in the web there is a setting", so the client will pass the frequency.
+    const success = await triggerNotification(req.body);
     
-    let message = "";
-    if (type === 'alert') {
-      const emoji = level === 'Dangerous' ? '🚨' : '⚠️';
-      const tempStr = typeof temperature === 'number' ? temperature.toFixed(2) : (Number(temperature)?.toFixed(2) ?? '0.00');
-      const gasStr = typeof gas === 'number' ? gas.toFixed(0) : (Number(gas)?.toFixed(0) ?? '0');
-      
-      message = `${emoji} <b>SENSOR ALERT: ${level}</b>\n\n` +
-                `<b>Time:</b> ${new Date(timestamp).toLocaleString()}\n` +
-                `<b>Temp:</b> ${tempStr}°C\n` +
-                `<b>Gas:</b> ${gasStr} PPM\n\n` +
-                `<i>Please check the dashboard immediately.</i>`;
-    } else if (type === 'status') {
-      const emoji = level === 'Connected' ? '✅' : '❌';
-      message = `${emoji} <b>SYSTEM STATUS: ${level}</b>\n\n` +
-                `<b>Time:</b> ${new Date(timestamp).toLocaleString()}\n` +
-                `The ESP32 has been <b>${level.toLowerCase()}</b>.`;
-    } else if (type === 'logging') {
-      const emoji = level === 'Started' ? '⏺️' : '⏹️';
-      message = `${emoji} <b>LOGGING STATUS: ${level}</b>\n\n` +
-                `<b>Time:</b> ${new Date(timestamp).toLocaleString()}\n` +
-                `Data recording has <b>${level.toLowerCase()}</b>.`;
-    }
-
-    if (!message) return res.status(400).json({ error: "Invalid notification type" });
-
-    const success = await sendTelegramMessage(message);
-    
-    // Also try email if configured
-    if (process.env.SMTP_USER && process.env.SMTP_PASS && type === 'alert') {
-      try {
-        const transporter = nodemailer.createTransport({
-          host: process.env.SMTP_HOST || "smtp.gmail.com",
-          port: parseInt(process.env.SMTP_PORT || "587"),
-          secure: false,
-          auth: {
-            user: process.env.SMTP_USER,
-            pass: process.env.SMTP_PASS,
-          },
-        });
-
-        const mailOptions = {
-          from: `"ESP32 Sensor Hub" <${process.env.SMTP_USER}>`,
-          to: process.env.NOTIFICATION_EMAIL || process.env.SMTP_USER,
-          subject: `⚠️ SENSOR ALERT: ${level} Detected!`,
-          html: `<div style="font-family: sans-serif; padding: 20px;"><h2>${level} Alert</h2><p>${message.replace(/\n/g, '<br>')}</p></div>`,
-        };
-        await transporter.sendMail(mailOptions);
-      } catch (e) {
-        console.error("[Server] Email failed:", e);
-      }
-    }
-
     if (success) {
       res.json({ success: true });
     } else {

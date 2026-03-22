@@ -4,11 +4,6 @@ import { Cpu, Wifi, Code, ChevronDown, ChevronUp, ExternalLink, Terminal } from 
 export const ESP32ConnectionGuide: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
 
-  const fbConfig = {
-    databaseURL: "https://esp-32-logging-f9d7d-default-rtdb.asia-southeast1.firebasedatabase.app"
-  };
-  const firebaseRestUrl = `${fbConfig.databaseURL}/sensor_logs.json`;
-
   const esp32Code = `
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -20,8 +15,7 @@ export const ESP32ConnectionGuide: React.FC = () => {
 // --- CONFIGURATION ---
 const char* ssid = "YOUR_WIFI_SSID";
 const char* password = "YOUR_WIFI_PASSWORD";
-// Direct Firebase Realtime Database REST Endpoint
-const char* firebaseRestUrl = "${firebaseRestUrl}";
+const char* serverUrl = "https://esp-32-sensor-hub.vercel.app/api/esp32/log";
 
 // DS18B20 Setup
 #define ONE_WIRE_BUS 4
@@ -39,9 +33,6 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 void setup() {
   Serial.begin(115200);
-  delay(1000);
-  
-  Serial.println("ESP32 Sensor Hub Initializing...");
   
   // Initialize Sensors & Display
   sensors.begin();
@@ -51,28 +42,18 @@ void setup() {
   display.clearDisplay();
   display.setTextColor(WHITE);
   
-  Serial.print("Connecting to WiFi: ");
-  Serial.println(ssid);
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
-  Serial.println("\nWiFi connected");
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
+  Serial.println("\\nWiFi connected");
 }
 
 void loop() {
   sensors.requestTemperatures();
   float temp = sensors.getTempCByIndex(0);
-  
-  // Read MQ2 Gas Sensor
   int gasValue = analogRead(MQ2PIN);
-  
-  // DEBUG: Print to Serial Monitor
-  Serial.print("Temp: "); Serial.print(temp); Serial.print(" C | ");
-  Serial.print("Gas Raw: "); Serial.println(gasValue);
 
   // Update OLED
   display.clearDisplay();
@@ -87,36 +68,17 @@ void loop() {
 
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
-    // Firebase REST API uses POST to push new data to a list
-    http.begin(firebaseRestUrl);
+    http.begin(serverUrl);
     http.addHeader("Content-Type", "application/json");
 
-    // Use Firebase Server Value for timestamp
-    String jsonPayload = "{\"temperature\":" + String(temp) + 
-                         ",\"gas\":" + String(gasValue) + 
-                         ",\"timestamp\":{\".sv\":\"timestamp\"}}";
-
-    Serial.print("Pushing to Firebase: ");
-    Serial.println(jsonPayload);
+    String jsonPayload = "{\\"temperature\\":" + String(temp) + 
+                         ",\\"gas\\":" + String(gasValue) + "}";
 
     int httpResponseCode = http.POST(jsonPayload);
-    
-    if (httpResponseCode > 0) {
-      Serial.print("Firebase Response: ");
-      Serial.println(httpResponseCode);
-      String payload = http.getString();
-      Serial.println(payload);
-    } else {
-      Serial.print("Firebase Error: ");
-      Serial.println(http.errorToString(httpResponseCode).c_str());
-    }
-    
     http.end();
-  } else {
-    Serial.println("WiFi Disconnected");
   }
   
-  delay(10000); // Send every 10 seconds
+  delay(5000);
 }
 `;
 
@@ -212,45 +174,22 @@ void loop() {
           </div>
 
           {/* API Endpoint Note */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <div className="p-6 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl">
-              <div className="flex items-center gap-3 text-emerald-400 font-bold mb-2">
-                <ExternalLink size={18} />
-                <h4 className="text-sm">Direct Firebase Connection</h4>
-              </div>
-              <p className="text-xs text-white/60 leading-relaxed">
-                The code above connects <strong>directly</strong> to your Firebase Realtime Database using the REST API. 
-                This means your ESP32 pushes data straight to the cloud, and this web application listens for those 
-                changes in real-time. No intermediate server is required for the data flow!
-              </p>
+          <div className="p-6 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl">
+            <div className="flex items-center gap-3 text-emerald-400 font-bold mb-2">
+              <ExternalLink size={18} />
+              <h4 className="text-sm">Important Note on API Endpoint</h4>
             </div>
-
-            <div className="p-6 bg-amber-500/10 border border-amber-500/20 rounded-2xl">
-              <div className="flex items-center gap-3 text-amber-400 font-bold mb-2">
-                <AlertTriangle size={18} />
-                <h4 className="text-sm">Troubleshooting: Gas is 0?</h4>
-              </div>
-              <ul className="text-[10px] text-white/60 space-y-2 list-disc pl-4">
-                <li><strong>Warm-up Time:</strong> MQ2 sensors require 24-48 hours of "burn-in" time for first use, and 2-3 minutes of warm-up every time they power on.</li>
-                <li><strong>Sensitivity:</strong> Adjust the small blue potentiometer on the back of the MQ2 module. If it's turned all the way down, it will always return 0.</li>
-                <li><strong>Wiring:</strong> Ensure MQ2 Analog Out is connected to <strong>GPIO 34</strong>. Check that the sensor has a solid 5V power supply.</li>
-                <li><strong>Firebase Rules:</strong> Ensure your Realtime Database rules allow write access to <code>sensor_logs</code>. For testing, you can use: <code>{'{".read": true, ".write": true}'}</code> (but secure them for production!).</li>
-              </ul>
-            </div>
+            <p className="text-xs text-white/60 leading-relaxed">
+              The code above uses a dedicated endpoint <code>/api/esp32/log</code>. 
+              This endpoint is designed to receive raw JSON from your ESP32 and securely store it in Firestore. 
+              <strong>New:</strong> Alerts and notifications are now processed on the server, meaning you will receive Telegram/Email alerts even if this browser tab is closed!
+            </p>
           </div>
         </div>
       )}
     </div>
   );
 };
-
-const AlertTriangle = ({ size, className = "" }: { size: number, className?: string }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
-    <path d="M12 9v4" />
-    <path d="M12 17h.01" />
-  </svg>
-);
 
 const CheckCircle = ({ size, className }: { size: number, className: string }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
