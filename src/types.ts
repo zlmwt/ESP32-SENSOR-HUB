@@ -11,5 +11,6 @@ export interface LoggingSettings {
   isLogging: boolean;
   interval: number;
   notificationFrequency: NotificationFrequency;
+  retentionDays: number;
   lastUpdated: any; // Firestore Timestamp
 }

@@ -8,7 +8,11 @@ import {
   query as dbQuery, 
   orderByChild, 
   limitToLast,
-  serverTimestamp as dbServerTimestamp
+  serverTimestamp as dbServerTimestamp,
+  remove,
+  get,
+  endAt,
+  update
 } from 'firebase/database';
 import { db } from './firebase';
 import { SensorData, LoggingSettings } from './types';
@@ -22,6 +26,7 @@ import { ESP32Simulator, SimulatedData, SimulationConfig } from './services/esp3
 import { Activity, Thermometer, Wind, RefreshCw, Cpu, Settings, LogOut, Send } from 'lucide-react';
 import { ESP32ConnectionGuide } from './components/ESP32ConnectionGuide';
 import { SimulationSettings } from './components/SimulationSettings';
+import { DataRetentionSettings } from './components/DataRetentionSettings';
 
 export function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
@@ -180,18 +185,34 @@ export function App() {
     const settingsRef = ref(db, 'settings/logging');
     const settingsUnsubscribe = onValue(settingsRef, (snapshot) => {
       if (snapshot.exists()) {
-        setSettings(snapshot.val() as LoggingSettings);
+        const data = snapshot.val() as LoggingSettings;
+        if (data.retentionDays === undefined) {
+          // Add default retention if missing
+          set(settingsRef, {
+            ...data,
+            retentionDays: 7,
+            lastUpdated: dbServerTimestamp()
+          });
+        }
+        setSettings(data);
       } else {
         // Initialize settings if they don't exist
         set(settingsRef, {
           isLogging: false,
           interval: 5000,
           notificationFrequency: 'minute',
+          retentionDays: 7,
           lastUpdated: dbServerTimestamp()
         });
       }
       setIsLoading(false);
     });
+
+    return () => settingsUnsubscribe();
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
 
     // Listen to logs (last 10)
     const logsRef = ref(db, 'sensor_logs');
@@ -209,19 +230,63 @@ export function App() {
             ...childSnapshot.val()
           });
         });
-        // Realtime Database returns data in ascending order of the order key
-        // We want descending for the UI
-        setLogs(data.reverse());
+        const reversedData = data.reverse();
+        
+        setLogs(currentLogs => {
+          // Only update if logging is active OR if we have no logs yet (initial load)
+          // This ensures the UI only updates live when the start button is pressed
+          if (settings?.isLogging || currentLogs.length === 0) {
+            return reversedData;
+          }
+          return currentLogs;
+        });
       } else {
         setLogs([]);
       }
     });
 
-    return () => {
-      settingsUnsubscribe();
-      logsUnsubscribe();
+    return () => logsUnsubscribe();
+  }, [isAuthenticated, settings?.isLogging]);
+
+  // Data Retention Cleanup Logic
+  useEffect(() => {
+    if (!isAuthenticated || !settings?.retentionDays || settings.retentionDays === 0) return;
+
+    const cleanupOldData = async () => {
+      try {
+        const retentionMs = settings.retentionDays * 24 * 60 * 60 * 1000;
+        const cutoffTime = Date.now() - retentionMs;
+        
+        const logsRef = ref(db, 'sensor_logs');
+        const oldLogsQuery = dbQuery(
+          logsRef,
+          orderByChild('timestamp'),
+          endAt(cutoffTime)
+        );
+
+        const snapshot = await get(oldLogsQuery);
+        if (snapshot.exists()) {
+          const updatePaths: Record<string, null> = {};
+          snapshot.forEach((child) => {
+            updatePaths[`sensor_logs/${child.key}`] = null;
+          });
+          
+          // Perform batch deletion using update with null values
+          const rootRef = ref(db);
+          await update(rootRef, updatePaths);
+          
+          console.log(`[App] Cleaned up ${Object.keys(updatePaths).length} old logs (older than ${settings.retentionDays} days)`);
+        }
+      } catch (err) {
+        console.error("Error during data cleanup:", err);
+      }
     };
-  }, [isAuthenticated]);
+
+    // Run cleanup once on load and then every hour if logging is active
+    cleanupOldData();
+    const interval = setInterval(cleanupOldData, 60 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [isAuthenticated, settings?.retentionDays]);
 
   // Mock Data Simulation (for testing without real ESP32)
   useEffect(() => {
@@ -615,6 +680,14 @@ export function App() {
                 onConfigChange={(newConfig) => setSimConfig(prev => ({ ...prev, ...newConfig }))}
                 isSimulating={isSimulating}
               />
+            </motion.section>
+
+            <motion.section variants={itemVariants} className="space-y-8">
+              <h3 className="text-xs font-black text-white/40 uppercase tracking-[0.4em] flex items-center gap-4">
+                Data Management
+                <div className="h-[1px] flex-1 bg-white/10" />
+              </h3>
+              <DataRetentionSettings settings={settings} />
             </motion.section>
           </div>
         </motion.div>
