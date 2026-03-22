@@ -54,15 +54,24 @@ export class ESP32Simulator {
       };
 
       try {
-        await push(ref(db, 'sensor_logs'), {
-          ...data,
-          timestamp: serverTimestamp()
+        // Use the API endpoint instead of direct Firebase push to trigger server-side logic
+        const response = await fetch('/api/esp32/log', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            temperature: data.temperature,
+            gas: data.gas
+          })
         });
+
+        if (!response.ok) {
+          throw new Error(`API error: ${response.status} ${await response.text()}`);
+        }
         
         if (this.onDataSent) {
           this.onDataSent(data);
         }
-        console.log(`[ESP32 Simulator] Data sent:`, data);
+        console.log(`[ESP32 Simulator] Data sent via API:`, data);
       } catch (error) {
         console.error(`[ESP32 Simulator] Failed to send data:`, error);
       }

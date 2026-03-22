@@ -9,6 +9,8 @@ import { createServer as createViteServer } from "vite";
 
 dotenv.config();
 
+console.log(`[Server] Environment variables loaded. Telegram Token present: ${!!process.env.TELEGRAM_BOT_TOKEN}, Chat ID present: ${!!process.env.TELEGRAM_CHAT_ID}`);
+
 // Load Firebase config from the same source as the client
 const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
 let fbConfig: any = {};
@@ -103,85 +105,90 @@ async function startServer() {
     }
 
     try {
-      // 1. Log the data
-      const logsRef = ref(db, 'sensor_logs');
-      
-      // Get last log to check for reconnection
-      const lastLogQuery = dbQuery(logsRef, orderByChild('timestamp'), limitToLast(1));
-      const lastLogSnap = await get(lastLogQuery);
-      let lastLogTime = 0;
-      if (lastLogSnap.exists()) {
-        const lastLog = Object.values(lastLogSnap.val())[0] as any;
-        lastLogTime = lastLog.timestamp || 0;
-      }
+      // 1. Load settings to check if logging is enabled
+      const settingsRef = ref(db, 'settings/logging');
+      const settingsSnap = await get(settingsRef);
+      const settings = settingsSnap.exists() ? settingsSnap.val() : { isLogging: false, notificationFrequency: 'minute' };
 
-      const newLogRef = await push(logsRef, {
-        temperature: tempNum,
-        gas: gasNum,
-        timestamp: serverTimestamp()
-      });
-      
-      const now = Date.now();
-      console.log(`[Server] ESP32 Data logged:`, { temperature: tempNum, gas: gasNum, id: newLogRef.key });
+      // 2. Log the data ONLY if logging is enabled
+      let newLogRef = null;
+      if (settings.isLogging) {
+        const logsRef = ref(db, 'sensor_logs');
+        
+        // Get last log to check for reconnection
+        const lastLogQuery = dbQuery(logsRef, orderByChild('timestamp'), limitToLast(1));
+        const lastLogSnap = await get(lastLogQuery);
+        let lastLogTime = 0;
+        if (lastLogSnap.exists()) {
+          const lastLog = Object.values(lastLogSnap.val())[0] as any;
+          lastLogTime = lastLog.timestamp || 0;
+        }
 
-      // 2. Check for Reconnection (if gap > 5 minutes)
-      if (lastLogTime > 0 && (now - lastLogTime > 5 * 60 * 1000)) {
-        console.log("[Server] System reconnected after a gap. Sending status notification...");
-        await triggerNotification({
-          type: 'status',
-          level: 'Connected',
-          timestamp: now
+        newLogRef = await push(logsRef, {
+          temperature: tempNum,
+          gas: gasNum,
+          timestamp: serverTimestamp()
         });
+        
+        const now = Date.now();
+        console.log(`[Server] ESP32 Data logged:`, { temperature: tempNum, gas: gasNum, id: newLogRef.key });
+
+        // 3. Check for Reconnection (if gap > 5 minutes)
+        if (lastLogTime > 0 && (now - lastLogTime > 5 * 60 * 1000)) {
+          console.log("[Server] System reconnected after a gap. Sending status notification...");
+          await triggerNotification({
+            type: 'status',
+            level: 'Connected',
+            timestamp: now
+          });
+        }
+      } else {
+        console.log(`[Server] ESP32 Data received but logging is OFF:`, { temperature: tempNum, gas: gasNum });
       }
 
-      // 3. Perform Risk Analysis & Notifications (Server-side)
+      // 4. Perform Risk Analysis & Notifications (Server-side) - ALWAYS check for risk
       const riskLevel = getRiskLevel(tempNum, gasNum);
       
       if (riskLevel === 'Dangerous' || riskLevel === 'Medium Risk') {
-        const settingsRef = ref(db, 'settings/logging');
-        const settingsSnap = await get(settingsRef);
-        const settings = settingsSnap.exists() ? settingsSnap.val() : { isLogging: true, notificationFrequency: 'minute' };
-
-        if (settings.isLogging) {
-          const lastSentRef = ref(db, 'settings/notifications/lastSent');
-          const lastSentSnap = await get(lastSentRef);
-          const lastSent = lastSentSnap.exists() ? lastSentSnap.val() : 0;
+        // We always notify for high risk levels even if logging is off, 
+        // as these are critical safety alerts.
+        const lastSentRef = ref(db, 'settings/notifications/lastSent');
+        const lastSentSnap = await get(lastSentRef);
+        const lastSent = lastSentSnap.exists() ? lastSentSnap.val() : 0;
+        
+        const now = Date.now();
+        const frequency = settings.notificationFrequency || 'minute';
+        const cooldowns: Record<string, number> = {
+          minute: 60 * 1000,
+          hour: 60 * 60 * 1000,
+          day: 24 * 60 * 60 * 1000
+        };
+        
+        if (now - lastSent > cooldowns[frequency]) {
+          console.log(`[Server] Alert condition met (${riskLevel}). Sending notification...`);
           
-          const now = Date.now();
-          const frequency = settings.notificationFrequency || 'minute';
-          const cooldowns: Record<string, number> = {
-            minute: 60 * 1000,
-            hour: 60 * 60 * 1000,
-            day: 24 * 60 * 60 * 1000
+          // Construct notification payload
+          const payload = {
+            type: 'alert',
+            level: riskLevel,
+            temperature: tempNum,
+            gas: gasNum,
+            timestamp: now
           };
-          
-          if (now - lastSent > cooldowns[frequency]) {
-            console.log(`[Server] Alert condition met (${riskLevel}). Sending notification...`);
-            
-            // Construct notification payload
-            const payload = {
-              type: 'alert',
-              level: riskLevel,
-              temperature: tempNum,
-              gas: gasNum,
-              timestamp: now
-            };
 
-            // Trigger notification (reusing the logic from /api/notify)
-            // We'll call the internal function directly or just duplicate the logic for simplicity in this file
-            // Let's move the notification logic to a helper function
-            await triggerNotification(payload);
-            
-            // Update last sent time
-            await set(lastSentRef, now);
-          }
+          await triggerNotification(payload);
+          
+          // Update last sent time
+          await set(lastSentRef, now);
+        } else {
+          console.log(`[Server] Alert skipped due to cooldown (${frequency}). Last sent: ${new Date(lastSent).toLocaleString()}`);
         }
       }
 
       res.json({ 
         success: true, 
-        id: newLogRef.key,
-        message: "Data logged successfully" 
+        id: newLogRef?.key || null,
+        message: settings.isLogging ? "Data logged successfully" : "Data received (logging off)" 
       });
     } catch (error: any) {
       console.error("[Server] Failed to log ESP32 data:", error);
@@ -196,7 +203,9 @@ async function startServer() {
 
   // Helper to trigger notification (Telegram/Email)
   const triggerNotification = async (payload: any) => {
-    const { type, level, temperature, gas, timestamp } = payload;
+    console.log('[Server] triggerNotification called with:', payload);
+    const { type, level, temperature, gas } = payload;
+    const timestamp = payload.timestamp || Date.now();
     let message = "";
     
     if (type === 'alert') {
@@ -257,6 +266,8 @@ async function startServer() {
     const token = process.env.TELEGRAM_BOT_TOKEN;
     const chatId = process.env.TELEGRAM_CHAT_ID;
 
+    console.log(`[Server] Attempting to send Telegram message. Token exists: ${!!token}, Chat ID exists: ${!!chatId}`);
+
     if (!token || !chatId) {
       console.warn("[Server] Telegram configuration missing (TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID). Skipping notification.");
       return false;
@@ -278,9 +289,10 @@ async function startServer() {
         })
       });
       
+      const responseData = await response.json().catch(() => ({}));
+      
       if (!response.ok) {
-        const error = await response.text();
-        console.error(`[Server] Telegram API error (${response.status}):`, error);
+        console.error(`[Server] Telegram API error (${response.status}):`, responseData);
         return false;
       }
 
@@ -294,6 +306,7 @@ async function startServer() {
 
   // Notification API (Updated for Telegram and Frequency)
   app.post("/api/notify", async (req, res) => {
+    console.log(`[Server] Received notification request:`, req.body);
     const success = await triggerNotification(req.body);
     
     if (success) {

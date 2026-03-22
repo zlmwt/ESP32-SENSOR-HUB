@@ -12,9 +12,11 @@ import {
   remove,
   get,
   endAt,
-  update
+  update,
+  off
 } from 'firebase/database';
-import { db } from './firebase';
+import { signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { db, auth } from './firebase';
 import { SensorData, LoggingSettings } from './types';
 import { SensorChart } from './components/SensorChart';
 import { SensorTable } from './components/SensorTable';
@@ -53,10 +55,34 @@ export function App() {
   const [lastLoggingState, setLastLoggingState] = useState<boolean | null>(null);
   const [isDeviceConnected, setIsDeviceConnected] = useState<boolean>(false);
   const [manualData, setManualData] = useState({ temperature: 25, gas: 200 });
+  const [isFirebaseReady, setIsFirebaseReady] = useState(false);
 
-  const handleLogin = () => {
-    localStorage.setItem('esp32_auth', 'true');
-    setIsAuthenticated(true);
+  // Initialize Firebase Auth
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        console.log("[App] Firebase authenticated:", user.uid);
+        setIsFirebaseReady(true);
+      } else {
+        console.log("[App] Firebase unauthenticated");
+        setIsFirebaseReady(false);
+        // If we are supposed to be authenticated but Firebase says no, try to sign in
+        if (isAuthenticated) {
+          signInAnonymously(auth).catch(err => console.error("Firebase Auth Error:", err));
+        }
+      }
+    });
+    return () => unsubscribe();
+  }, [isAuthenticated]);
+
+  const handleLogin = async () => {
+    try {
+      await signInAnonymously(auth);
+      localStorage.setItem('esp32_auth', 'true');
+      setIsAuthenticated(true);
+    } catch (err) {
+      console.error("Login Error:", err);
+    }
   };
 
   const handleLogout = () => {
@@ -114,7 +140,8 @@ export function App() {
       if (isAuthenticated) {
         sendNotification({
           type: 'status',
-          level: isConnected ? 'Connected' : 'Disconnected'
+          level: isConnected ? 'Connected' : 'Disconnected',
+          timestamp: Date.now()
         });
       }
     }
@@ -123,12 +150,19 @@ export function App() {
   // Logging State Monitor
   useEffect(() => {
     if (settings && lastLoggingState !== null && settings.isLogging !== lastLoggingState) {
+      console.log(`[App] Logging state changed to: ${settings.isLogging}. Sending notification...`);
       sendNotification({
         type: 'logging',
-        level: settings.isLogging ? 'Started' : 'Stopped'
+        level: settings.isLogging ? 'Started' : 'Stopped',
+        timestamp: Date.now()
       });
     }
-    if (settings) setLastLoggingState(settings.isLogging);
+    // Initialize lastLoggingState with the first settings load
+    if (settings && lastLoggingState === null) {
+      setLastLoggingState(settings.isLogging);
+    } else if (settings) {
+      setLastLoggingState(settings.isLogging);
+    }
   }, [settings?.isLogging]);
 
   // Risk Analysis Logic
@@ -150,40 +184,20 @@ export function App() {
     return levels[maxRisk];
   };
 
-  // Notification Monitor
-  useEffect(() => {
-    if (logs.length === 0 || !isAuthenticated || !settings) return;
-    const current = logs[0];
-    const currentRisk = getRiskLevel(current.temperature, current.gas);
-    
-    const isHighRisk = currentRisk === 'Medium Risk' || currentRisk === 'Dangerous';
-    const isNewRisk = currentRisk !== lastRiskLevel;
-    const freq = settings.notificationFrequency || 'minute';
-
-    if (isHighRisk && (isNewRisk || shouldNotify('alert', freq))) {
-      console.log(`[App] High risk detected (${currentRisk}). Sending notification...`);
-      sendNotification({
-        type: 'alert',
-        level: currentRisk,
-        temperature: current.temperature,
-        gas: current.gas
-      });
-      setLastRiskLevel(currentRisk);
-    } else if (!isHighRisk) {
-      setLastRiskLevel(currentRisk);
-    }
-  }, [logs, lastRiskLevel, isAuthenticated, settings]);
+  // Notification Monitor (Removed client-side alert logic as it's now handled server-side via API)
+  // This prevents duplicate notifications and ensures alerts work when tab is closed.
 
   // Realtime Database listeners
   useEffect(() => {
-    if (!isAuthenticated) {
-      setIsLoading(false);
+    if (!isAuthenticated || !isFirebaseReady) {
+      if (!isAuthenticated) setIsLoading(false);
       return;
     }
 
     // Listen to settings
     const settingsRef = ref(db, 'settings/logging');
     const settingsUnsubscribe = onValue(settingsRef, (snapshot) => {
+      console.log("[App] Settings updated from DB:", snapshot.val());
       if (snapshot.exists()) {
         const data = snapshot.val() as LoggingSettings;
         if (data.retentionDays === undefined) {
@@ -206,13 +220,16 @@ export function App() {
         });
       }
       setIsLoading(false);
+    }, (error) => {
+      console.error("[App] Settings listener error:", error);
+      setIsLoading(false); // Stop loading even on error
     });
 
     return () => settingsUnsubscribe();
-  }, [isAuthenticated]);
+  }, [isAuthenticated, isFirebaseReady]);
 
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || !isFirebaseReady) return;
 
     // Listen to logs (last 10)
     const logsRef = ref(db, 'sensor_logs');
@@ -243,10 +260,12 @@ export function App() {
       } else {
         setLogs([]);
       }
+    }, (error) => {
+      console.error("[App] Logs listener error:", error);
     });
 
     return () => logsUnsubscribe();
-  }, [isAuthenticated, settings?.isLogging]);
+  }, [isAuthenticated, isFirebaseReady, settings?.isLogging]);
 
   // Data Retention Cleanup Logic
   useEffect(() => {
@@ -299,14 +318,19 @@ export function App() {
   }, [isSimulating, settings?.isLogging, settings?.interval, isAuthenticated]);
 
   const handleManualInput = async () => {
-    if (!settings?.isLogging || !isAuthenticated) return;
+    if (!isAuthenticated) return;
     try {
-      const logsRef = ref(db, 'sensor_logs');
-      await push(logsRef, {
-        ...manualData,
-        timestamp: dbServerTimestamp()
+      const response = await fetch('/api/esp32/log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(manualData)
       });
-      console.log("[App] Manual data logged:", manualData);
+      
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status} ${await response.text()}`);
+      }
+      
+      console.log("[App] Manual data logged via API:", manualData);
     } catch (err) {
       console.error("Error logging manual data:", err);
     }
@@ -334,6 +358,14 @@ export function App() {
         damping: 20
       }
     }
+  };
+
+  const handleTestNotification = () => {
+    sendNotification({
+      type: 'status',
+      level: 'Test Notification',
+      timestamp: Date.now()
+    });
   };
 
   if (isLoading) {
@@ -417,7 +449,10 @@ export function App() {
         <motion.div
           variants={itemVariants}
         >
-          <LoggingControls settings={settings} />
+          <LoggingControls 
+            settings={settings} 
+            onTestNotification={handleTestNotification}
+          />
         </motion.div>
 
         {/* 2. Temperature and Gas Concentration */}

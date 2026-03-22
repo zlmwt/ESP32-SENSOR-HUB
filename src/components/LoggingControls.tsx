@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Play, Square, Timer, Save, Bell } from 'lucide-react';
+import { Play, Square, Timer, Save, Bell, Send } from 'lucide-react';
 import { LoggingSettings, NotificationFrequency } from '../types';
 import { ref, set, serverTimestamp } from 'firebase/database';
 import { db } from '../firebase';
@@ -7,9 +7,10 @@ import { motion } from 'motion/react';
 
 interface LoggingControlsProps {
   settings: LoggingSettings | null;
+  onTestNotification: () => void;
 }
 
-export const LoggingControls: React.FC<LoggingControlsProps> = ({ settings }) => {
+export const LoggingControls: React.FC<LoggingControlsProps> = ({ settings, onTestNotification }) => {
   const [localInterval, setLocalInterval] = useState<number>(settings?.interval || 5000);
   const [isUpdating, setIsUpdating] = useState(false);
 
@@ -162,6 +163,14 @@ export const LoggingControls: React.FC<LoggingControlsProps> = ({ settings }) =>
             </button>
           ))}
         </div>
+        <button
+          onClick={onTestNotification}
+          disabled={isUpdating || !settings}
+          className="mt-4 w-full py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest text-white/60 hover:text-white transition-all flex items-center justify-center gap-2"
+        >
+          <Send size={14} />
+          Test Telegram
+        </button>
       </motion.div>
     </div>
   );
