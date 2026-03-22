@@ -27,7 +27,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
               <div className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
               <span className="text-xs font-bold text-white/80">{entry.name}:</span>
               <span className="text-xs font-mono font-bold" style={{ color: entry.color }}>
-                {entry.value.toFixed(1)}
+                {entry.value?.toFixed(1) ?? '0.0'}
                 {entry.name.includes('Temp') ? '°C' : ' PPM'}
               </span>
             </div>

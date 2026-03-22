@@ -140,10 +140,13 @@ async function startServer() {
     let message = "";
     if (type === 'alert') {
       const emoji = level === 'Dangerous' ? '🚨' : '⚠️';
+      const tempStr = typeof temperature === 'number' ? temperature.toFixed(2) : (Number(temperature)?.toFixed(2) ?? '0.00');
+      const gasStr = typeof gas === 'number' ? gas.toFixed(0) : (Number(gas)?.toFixed(0) ?? '0');
+      
       message = `${emoji} <b>SENSOR ALERT: ${level}</b>\n\n` +
                 `<b>Time:</b> ${new Date(timestamp).toLocaleString()}\n` +
-                `<b>Temp:</b> ${temperature.toFixed(2)}°C\n` +
-                `<b>Gas:</b> ${gas.toFixed(0)} PPM\n\n` +
+                `<b>Temp:</b> ${tempStr}°C\n` +
+                `<b>Gas:</b> ${gasStr} PPM\n\n` +
                 `<i>Please check the dashboard immediately.</i>`;
     } else if (type === 'status') {
       const emoji = level === 'Connected' ? '✅' : '❌';

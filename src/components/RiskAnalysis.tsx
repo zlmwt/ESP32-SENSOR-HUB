@@ -155,7 +155,7 @@ export const RiskAnalysis: React.FC<RiskAnalysisProps> = ({ currentData }) => {
                   <p className="text-[10px] text-white/60 uppercase font-black tracking-widest">Temperature</p>
                 </div>
                 <p className="text-sm text-white/80 font-medium">
-                  Current reading <span className="text-emerald-400 font-mono font-bold">{temperature.toFixed(1)}°C</span> is {tempRisk.toLowerCase()}. 
+                  Current reading <span className="text-emerald-400 font-mono font-bold">{temperature?.toFixed(1) ?? '0.0'}°C</span> is {tempRisk.toLowerCase()}. 
                   {tempRisk === 'Normal' ? ' Temperature is stable and safe.' : ' Please check the room temperature.'}
                 </p>
               </motion.div>
@@ -168,7 +168,7 @@ export const RiskAnalysis: React.FC<RiskAnalysisProps> = ({ currentData }) => {
                   <p className="text-[10px] text-white/60 uppercase font-black tracking-widest">Gas Level</p>
                 </div>
                 <p className="text-sm text-white/80 font-medium">
-                  Gas level <span className="text-amber-400 font-mono font-bold">{gas.toFixed(0)} PPM</span> is {gasRisk.toLowerCase()}.
+                  Gas level <span className="text-amber-400 font-mono font-bold">{gas?.toFixed(0) ?? '0'} PPM</span> is {gasRisk.toLowerCase()}.
                   {gasRisk === 'Normal' ? ' Air quality is clean and safe.' : ' Please ensure proper ventilation.'}
                 </p>
               </motion.div>

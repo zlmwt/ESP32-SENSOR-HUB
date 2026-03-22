@@ -375,7 +375,7 @@ export function App() {
               {logs[0] ? (
                 <>
                   <h2 className="text-8xl font-black font-mono tracking-tighter text-glow text-emerald-400">
-                    {logs[0].temperature.toFixed(1)}
+                    {logs[0].temperature?.toFixed(1) ?? '0.0'}
                   </h2>
                   <span className="text-3xl text-white/30 font-mono">°C</span>
                 </>
@@ -411,7 +411,7 @@ export function App() {
               {logs[0] ? (
                 <>
                   <h2 className="text-8xl font-black font-mono tracking-tighter text-glow text-amber-400">
-                    {logs[0].gas.toFixed(0)}
+                    {logs[0].gas?.toFixed(0) ?? '0'}
                   </h2>
                   <span className="text-3xl text-white/30 font-mono">PPM</span>
                 </>

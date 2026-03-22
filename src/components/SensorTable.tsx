@@ -91,7 +91,7 @@ export const SensorTable: React.FC<SensorTableProps> = ({ data }) => {
                     <td className="px-8 py-5">
                       <div className="flex items-baseline gap-1">
                         <span className="text-lg font-black font-mono text-emerald-400 text-glow">
-                          {log.temperature.toFixed(2)}
+                          {log.temperature?.toFixed(2) ?? '0.00'}
                         </span>
                         <span className="text-[10px] text-white/20 font-mono">°C</span>
                       </div>
@@ -99,7 +99,7 @@ export const SensorTable: React.FC<SensorTableProps> = ({ data }) => {
                     <td className="px-8 py-5">
                       <div className="flex items-baseline gap-1">
                         <span className="text-lg font-black font-mono text-amber-400 text-glow">
-                          {log.gas.toFixed(0)}
+                          {log.gas?.toFixed(0) ?? '0'}
                         </span>
                         <span className="text-[10px] text-white/20 font-mono">PPM</span>
                       </div>
