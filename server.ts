@@ -3,6 +3,7 @@ import nodemailer from "nodemailer";
 import path from "path";
 import dotenv from "dotenv";
 import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously } from 'firebase/auth';
 import { getDatabase, ref, push, serverTimestamp, get, set, query as dbQuery, orderByChild, limitToLast } from 'firebase/database';
 import fs from 'fs';
 // @ts-ignore - createViteServer will be imported dynamically for dev only
@@ -45,6 +46,20 @@ if (Object.keys(fbConfig).length === 0) {
 const fbApp = initializeApp(fbConfig);
 // @ts-ignore - databaseURL might be in the config or use default from projectId
 const db = getDatabase(fbApp, fbConfig.databaseURL || `https://${fbConfig.projectId}-default-rtdb.firebaseio.com/`);
+const auth = getAuth(fbApp);
+
+// Authenticate server-side to avoid "Permission denied" errors
+async function ensureAuthenticated() {
+  if (auth.currentUser) return true;
+  try {
+    const userCredential = await signInAnonymously(auth);
+    console.log(`[Server] Firebase authenticated anonymously as: ${userCredential.user.uid}`);
+    return true;
+  } catch (error: any) {
+    console.error("[Server] Firebase authentication failed:", error.message);
+    return false;
+  }
+}
 
 async function startServer() {
   const app = express();
@@ -80,6 +95,15 @@ async function startServer() {
   app.post("/api/esp32/log", async (req, res) => {
     const { temperature, gas } = req.body;
     
+    // Ensure authenticated before database operations
+    const isAuth = await ensureAuthenticated();
+    if (!isAuth) {
+      return res.status(500).json({ 
+        error: "Server authentication failed. Please ensure Anonymous Auth is enabled in Firebase Console.",
+        code: "auth_failed"
+      });
+    }
+
     // Validate presence
     if (temperature === undefined || gas === undefined) {
       const missing = [];
@@ -344,7 +368,13 @@ async function startServer() {
   }
 
   if (!process.env.VERCEL) {
-    app.listen(PORT, "0.0.0.0", () => {
+    // Ensure we are authenticated before starting the server
+  const isAuthenticated = await ensureAuthenticated();
+  if (!isAuthenticated) {
+    console.warn("[Server] Starting server without Firebase authentication. Database operations may fail with 'Permission denied'.");
+  }
+
+  app.listen(PORT, "0.0.0.0", () => {
       console.log(`[Server] Listening on http://0.0.0.0:${PORT}`);
     });
   }
