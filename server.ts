@@ -5,7 +5,8 @@ import dotenv from "dotenv";
 import { initializeApp } from 'firebase/app';
 import { getDatabase, ref, push, serverTimestamp, get, set, query as dbQuery, orderByChild, limitToLast } from 'firebase/database';
 import fs from 'fs';
-import { createServer as createViteServer } from "vite";
+// @ts-ignore - createViteServer will be imported dynamically for dev only
+let createViteServer: any;
 
 dotenv.config();
 
@@ -319,7 +320,8 @@ async function startServer() {
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
     try {
-      const vite = await createViteServer({
+      const { createServer: createViteServerDynamic } = await import("vite");
+      const vite = await createViteServerDynamic({
         server: { middlewareMode: true },
         appType: "spa",
       });
