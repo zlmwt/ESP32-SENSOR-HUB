@@ -4,7 +4,7 @@ import path from "path";
 import dotenv from "dotenv";
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously } from 'firebase/auth';
-import { getDatabase, ref, push, serverTimestamp, get, set, query as dbQuery, orderByChild, limitToLast } from 'firebase/database';
+import { getDatabase, ref, push, serverTimestamp, get, set, query as dbQuery, orderByChild, limitToLast, onChildAdded } from 'firebase/database';
 import fs from 'fs';
 // @ts-ignore - createViteServer will be imported dynamically for dev only
 let createViteServer: any;
@@ -140,104 +140,19 @@ async function startServer() {
       if (settings.isLogging) {
         const logsRef = ref(db, 'sensor_logs');
         
-        // Get last log to check for reconnection
-        const lastLogQuery = dbQuery(logsRef, orderByChild('timestamp'), limitToLast(1));
-        const lastLogSnap = await get(lastLogQuery);
-        let lastLogTime = 0;
-        if (lastLogSnap.exists()) {
-          const lastLog = Object.values(lastLogSnap.val())[0] as any;
-          lastLogTime = lastLog.timestamp || 0;
-        }
-
         newLogRef = await push(logsRef, {
           temperature: tempNum,
           gas: gasNum,
           timestamp: serverTimestamp()
         });
         
-        const now = Date.now();
-        console.log(`[Server] ESP32 Data logged:`, { temperature: tempNum, gas: gasNum, id: newLogRef.key });
-
-        // 3. Check for Reconnection (if gap > 5 minutes)
-        if (lastLogTime > 0 && (now - lastLogTime > 5 * 60 * 1000)) {
-          console.log("[Server] System reconnected after a gap. Sending status notification...");
-          await triggerNotification({
-            type: 'status',
-            level: 'Connected',
-            timestamp: now
-          });
-        }
+        console.log(`[Server] ESP32 Data logged via API:`, { temperature: tempNum, gas: gasNum, id: newLogRef.key });
       } else {
-        console.log(`[Server] ESP32 Data received but logging is OFF:`, { temperature: tempNum, gas: gasNum });
+        console.log(`[Server] ESP32 Data received via API but logging is OFF:`, { temperature: tempNum, gas: gasNum });
       }
 
-      // 4. Perform Risk Analysis & Notifications (Server-side)
-      const riskLevel = getRiskLevel(tempNum, gasNum);
-      console.log(`[Server] Risk Analysis: Temp=${tempNum}, Gas=${gasNum} => RiskLevel=${riskLevel}`);
-      
-      const lastSentRef = ref(db, 'settings/notifications/lastSent');
-      const lastSentSnap = await get(lastSentRef);
-      const lastSent = lastSentSnap.exists() ? Number(lastSentSnap.val()) : 0;
-      
-      const now = Date.now();
-      const frequency = settings.notificationFrequency || 'minute';
-      const cooldowns: Record<string, number> = {
-        minute: 60 * 1000,
-        hour: 60 * 60 * 1000,
-        day: 24 * 60 * 60 * 1000
-      };
-      
-      const frequencyCooldown = cooldowns[frequency] || cooldowns.minute;
-      const timeSinceLast = now - lastSent;
-      
-      // LOGIC: 
-      // 1. Dangerous = Immediate (with 1-min anti-spam)
-      // 2. Others (Medium, Low, Normal) = Follow Frequency
-      
-      let shouldNotify = false;
-      let notificationType = 'alert';
-      
-      if (riskLevel === 'Dangerous') {
-        const dangerousCooldown = 60 * 1000; // 1 minute anti-spam for dangerous
-        if (timeSinceLast > dangerousCooldown) {
-          shouldNotify = true;
-          console.log(`[Server] IMMEDIATE ALERT: Dangerous level detected!`);
-        } else {
-          console.log(`[Server] Dangerous alert suppressed by 1-min anti-spam. Time since last: ${(timeSinceLast/1000).toFixed(1)}s`);
-        }
-      } else {
-        // For Normal, Medium, Low - follow the user-selected frequency
-        if (timeSinceLast > frequencyCooldown) {
-          shouldNotify = true;
-          notificationType = riskLevel === 'Normal' ? 'status_update' : 'alert';
-          console.log(`[Server] FREQUENCY UPDATE: Sending ${notificationType} (${riskLevel}) after ${frequency} cooldown.`);
-        } else {
-          // Only log check for non-normal or if it's been a while
-          if (riskLevel !== 'Normal' || timeSinceLast > frequencyCooldown * 0.9) {
-            console.log(`[Server] Notification skipped. Risk=${riskLevel}, Freq=${frequency}, TimeSinceLast=${(timeSinceLast/1000).toFixed(1)}s, Cooldown=${frequencyCooldown/1000}s`);
-          }
-        }
-      }
-
-      if (shouldNotify) {
-        // Construct notification payload
-        const payload = {
-          type: notificationType,
-          level: riskLevel,
-          temperature: tempNum,
-          gas: gasNum,
-          timestamp: now
-        };
-
-        const success = await triggerNotification(payload);
-        console.log(`[Server] Notification (${notificationType}) success: ${success}`);
-        
-        if (success) {
-          // Update last sent time
-          await set(lastSentRef, now);
-          console.log(`[Server] LastSent updated to: ${new Date(now).toLocaleString()}`);
-        }
-      }
+      // Note: Risk Analysis and Notifications are now handled by the Database Listener
+      // to support real ESP32 devices writing directly to the database.
 
       res.json({ 
         success: true, 
@@ -372,6 +287,99 @@ async function startServer() {
       res.status(500).json({ error: "Failed to send notification" });
     }
   });
+
+  // --- Realtime Database Listener for Notifications ---
+  // This ensures notifications work even if the real ESP32 writes directly to the DB
+  const setupDatabaseListener = async () => {
+    const isAuth = await ensureAuthenticated();
+    if (!isAuth) return;
+
+    console.log("[Server] Setting up Realtime Database listener for sensor_logs...");
+    const logsRef = ref(db, 'sensor_logs');
+    const startTime = Date.now();
+
+    onChildAdded(logsRef, async (snapshot) => {
+      const data = snapshot.val();
+      if (!data) return;
+
+      // Skip logs that were already in the DB before the server started
+      // or logs that don't have a valid timestamp
+      const logTime = data.timestamp || 0;
+      if (logTime < startTime - 10000) { // 10s buffer
+        return;
+      }
+
+      console.log(`[Server] New log detected via DB listener:`, data);
+      
+      try {
+        // 1. Load settings
+        const settingsRef = ref(db, 'settings/logging');
+        const settingsSnap = await get(settingsRef);
+        const settings = settingsSnap.exists() ? settingsSnap.val() : { isLogging: false, notificationFrequency: 'minute' };
+
+        const tempNum = Number(data.temperature);
+        const gasNum = Number(data.gas);
+
+        if (isNaN(tempNum) || isNaN(gasNum)) return;
+
+        // 2. Perform Risk Analysis & Notifications
+        const riskLevel = getRiskLevel(tempNum, gasNum);
+        console.log(`[Server] [Listener] Risk Analysis: Temp=${tempNum}, Gas=${gasNum} => RiskLevel=${riskLevel}`);
+        
+        const lastSentRef = ref(db, 'settings/notifications/lastSent');
+        const lastSentSnap = await get(lastSentRef);
+        const lastSent = lastSentSnap.exists() ? Number(lastSentSnap.val()) : 0;
+        
+        const now = Date.now();
+        const frequency = settings.notificationFrequency || 'minute';
+        const cooldowns: Record<string, number> = {
+          minute: 60 * 1000,
+          hour: 60 * 60 * 1000,
+          day: 24 * 60 * 60 * 1000
+        };
+        
+        const frequencyCooldown = cooldowns[frequency] || cooldowns.minute;
+        const timeSinceLast = now - lastSent;
+        
+        let shouldNotify = false;
+        let notificationType = 'alert';
+        
+        if (riskLevel === 'Dangerous') {
+          const dangerousCooldown = 60 * 1000; // 1 minute anti-spam for dangerous
+          if (timeSinceLast > dangerousCooldown) {
+            shouldNotify = true;
+            console.log(`[Server] [Listener] IMMEDIATE ALERT: Dangerous level detected!`);
+          }
+        } else {
+          if (timeSinceLast > frequencyCooldown) {
+            shouldNotify = true;
+            notificationType = riskLevel === 'Normal' ? 'status_update' : 'alert';
+            console.log(`[Server] [Listener] FREQUENCY UPDATE: Sending ${notificationType} (${riskLevel})`);
+          }
+        }
+
+        if (shouldNotify) {
+          const payload = {
+            type: notificationType,
+            level: riskLevel,
+            temperature: tempNum,
+            gas: gasNum,
+            timestamp: now
+          };
+
+          const success = await triggerNotification(payload);
+          if (success) {
+            await set(lastSentRef, now);
+          }
+        }
+      } catch (err) {
+        console.error("[Server] Error in DB listener processing:", err);
+      }
+    });
+  };
+
+  // Start the listener
+  setupDatabaseListener();
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
