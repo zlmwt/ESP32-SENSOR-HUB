@@ -25,7 +25,7 @@ import { RiskAnalysis } from './components/RiskAnalysis';
 import { LoginPage } from './components/LoginPage';
 import { VirtualDeviceConsole } from './components/VirtualDeviceConsole';
 import { ESP32Simulator, SimulatedData, SimulationConfig } from './services/esp32Simulator';
-import { Activity, Thermometer, Wind, RefreshCw, Cpu, Settings, LogOut, Send } from 'lucide-react';
+import { Activity, Thermometer, Wind, RefreshCw, Cpu, Settings, LogOut, Send, AlertTriangle } from 'lucide-react';
 import { ESP32ConnectionGuide } from './components/ESP32ConnectionGuide';
 import { SimulationSettings } from './components/SimulationSettings';
 import { DataRetentionSettings } from './components/DataRetentionSettings';
@@ -228,35 +228,42 @@ export function App() {
     return () => settingsUnsubscribe();
   }, [isAuthenticated, isFirebaseReady]);
 
+  const [sessionStartTime, setSessionStartTime] = useState<number>(Date.now());
+
+  // Reset session start time when logging is toggled on
+  useEffect(() => {
+    if (settings?.isLogging) {
+      // Use a 30s buffer to account for clock skew between client and server
+      setSessionStartTime(Date.now() - 30000);
+    }
+  }, [settings?.isLogging]);
+
   useEffect(() => {
     if (!isAuthenticated || !isFirebaseReady) return;
 
-    // Listen to logs (last 10)
+    // Listen to logs (last 20 to give more context but filterable)
     const logsRef = ref(db, 'sensor_logs');
     const logsQuery = dbQuery(
       logsRef,
       orderByChild('timestamp'),
-      limitToLast(10)
+      limitToLast(20)
     );
     const logsUnsubscribe = onValue(logsQuery, (snapshot) => {
       if (snapshot.exists()) {
         const data: SensorData[] = [];
         snapshot.forEach((childSnapshot) => {
-          data.push({
-            id: childSnapshot.key as string,
-            ...childSnapshot.val()
-          });
+          const val = childSnapshot.val();
+          // Filter: If logging is active, only show logs from this session
+          // If not logging, show historical data
+          if (!settings?.isLogging || (val.timestamp && val.timestamp >= sessionStartTime)) {
+            data.push({
+              id: childSnapshot.key as string,
+              ...val
+            });
+          }
         });
         const reversedData = data.reverse();
-        
-        setLogs(currentLogs => {
-          // Only update if logging is active OR if we have no logs yet (initial load)
-          // This ensures the UI only updates live when the start button is pressed
-          if (settings?.isLogging || currentLogs.length === 0) {
-            return reversedData;
-          }
-          return currentLogs;
-        });
+        setLogs(reversedData);
       } else {
         setLogs([]);
       }
@@ -265,7 +272,7 @@ export function App() {
     });
 
     return () => logsUnsubscribe();
-  }, [isAuthenticated, isFirebaseReady, settings?.isLogging]);
+  }, [isAuthenticated, isFirebaseReady, settings?.isLogging, sessionStartTime]);
 
   // Data Retention Cleanup Logic
   useEffect(() => {
@@ -307,15 +314,50 @@ export function App() {
     return () => clearInterval(interval);
   }, [isAuthenticated, settings?.retentionDays]);
 
+  const [isTabActive, setIsTabActive] = useState(true);
+
+  // Tab Lock Logic to prevent multiple simulators
+  useEffect(() => {
+    const tabId = Math.random().toString(36).substring(7);
+    const checkTab = () => {
+      const activeTab = localStorage.getItem('esp32_active_tab');
+      if (!activeTab || activeTab === tabId) {
+        localStorage.setItem('esp32_active_tab', tabId);
+        setIsTabActive(true);
+      } else {
+        setIsTabActive(false);
+      }
+    };
+
+    checkTab();
+    const interval = setInterval(checkTab, 2000);
+    window.addEventListener('beforeunload', () => {
+      if (localStorage.getItem('esp32_active_tab') === tabId) {
+        localStorage.removeItem('esp32_active_tab');
+      }
+    });
+
+    return () => {
+      clearInterval(interval);
+      if (localStorage.getItem('esp32_active_tab') === tabId) {
+        localStorage.removeItem('esp32_active_tab');
+      }
+    };
+  }, []);
+
   // Mock Data Simulation (for testing without real ESP32)
   useEffect(() => {
-    if (isSimulating && settings?.isLogging && isAuthenticated) {
-      simulator.start(settings.interval);
+    const interval = settings?.interval;
+    const isLogging = settings?.isLogging;
+    
+    if (isSimulating && isLogging && isAuthenticated && interval && isTabActive) {
+      console.log(`[App] Starting simulator with interval: ${interval}ms`);
+      simulator.start(interval);
     } else {
       simulator.stop();
     }
     return () => simulator.stop();
-  }, [isSimulating, settings?.isLogging, settings?.interval, isAuthenticated]);
+  }, [isSimulating, settings?.isLogging, settings?.interval, isAuthenticated, isTabActive]);
 
   const handleManualInput = async () => {
     if (!isAuthenticated) return;
@@ -444,6 +486,26 @@ export function App() {
             </button>
           </motion.div>
         </header>
+
+        {/* Tab Lock Warning */}
+        {!isTabActive && settings?.isLogging && (
+          <motion.div 
+            variants={itemVariants}
+            className="bg-amber-500/10 border border-amber-500/20 p-4 rounded-2xl mb-8 flex items-center gap-4 glow-amber"
+          >
+            <div className="p-2 bg-amber-500/20 rounded-lg">
+              <AlertTriangle className="text-amber-500" size={20} />
+            </div>
+            <div>
+              <p className="text-amber-200 text-sm font-bold tracking-tight">
+                Simulation Standby
+              </p>
+              <p className="text-amber-200/60 text-xs font-mono">
+                The simulator is already running in another tab. This tab is paused to prevent duplicate data logs.
+              </p>
+            </div>
+          </motion.div>
+        )}
 
         {/* 1. Logging Status and Interval */}
         <motion.div

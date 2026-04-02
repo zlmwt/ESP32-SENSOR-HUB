@@ -39,11 +39,10 @@ export class ESP32Simulator {
     this.stop();
     console.log(`[ESP32 Simulator] Starting with interval: ${intervalMs}ms`);
     
-    this.intervalId = setInterval(async () => {
+    const sendData = async () => {
       const generateValue = (min: number, max: number, noise: number) => {
         const midpoint = (min + max) / 2;
         const halfRange = (max - min) / 2;
-        // If noise is 0, return midpoint. If noise is 1, return full random in range.
         return midpoint + (Math.random() * 2 - 1) * halfRange * noise;
       };
 
@@ -54,7 +53,6 @@ export class ESP32Simulator {
       };
 
       try {
-        // Use the API endpoint instead of direct Firebase push to trigger server-side logic
         const response = await fetch('/api/esp32/log', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -75,7 +73,13 @@ export class ESP32Simulator {
       } catch (error) {
         console.error(`[ESP32 Simulator] Failed to send data:`, error);
       }
-    }, intervalMs);
+    };
+
+    // Send first log immediately
+    sendData();
+    
+    // Then start interval
+    this.intervalId = setInterval(sendData, intervalMs);
   }
 
   stop() {

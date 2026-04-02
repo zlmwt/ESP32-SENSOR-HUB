@@ -109,7 +109,7 @@ export const LoggingControls: React.FC<LoggingControlsProps> = ({ settings, onTe
           <Timer size={28} className="text-amber-400" />
         </div>
         <div className="flex-1">
-          <h3 className="text-xl font-black text-white uppercase tracking-tighter text-nowrap">Update Frequency</h3>
+          <h3 className="text-xl font-black text-white uppercase tracking-tighter text-nowrap">Logging Interval</h3>
           <div className="flex items-center gap-4 mt-2">
             <div className="relative">
               <input

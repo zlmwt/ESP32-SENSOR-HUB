@@ -130,23 +130,48 @@ async function startServer() {
     }
 
     try {
-      // 1. Load settings to check if logging is enabled
+      // 1. Load settings to check if logging is enabled and the interval
       const settingsRef = ref(db, 'settings/logging');
       const settingsSnap = await get(settingsRef);
-      const settings = settingsSnap.exists() ? settingsSnap.val() : { isLogging: false, notificationFrequency: 'minute' };
+      const settings = settingsSnap.exists() ? settingsSnap.val() : { isLogging: false, interval: 5000, notificationFrequency: 'minute' };
 
       // 2. Log the data ONLY if logging is enabled
       let newLogRef = null;
       if (settings.isLogging) {
-        const logsRef = ref(db, 'sensor_logs');
+        const now = Date.now();
+        const lastLogRef = ref(db, 'settings/logging/lastLogTimestamp');
+        const lastLogSnap = await get(lastLogRef);
+        const lastLogTime = lastLogSnap.exists() ? Number(lastLogSnap.val()) : 0;
         
-        newLogRef = await push(logsRef, {
-          temperature: tempNum,
-          gas: gasNum,
-          timestamp: serverTimestamp()
-        });
+        const interval = settings.interval || 5000;
         
-        console.log(`[Server] ESP32 Data logged via API:`, { temperature: tempNum, gas: gasNum, id: newLogRef.key });
+        // Enforce the interval on the server side
+        if (now - lastLogTime >= interval - 500) { // 500ms grace period for network jitter
+          const logsRef = ref(db, 'sensor_logs');
+          
+          newLogRef = await push(logsRef, {
+            temperature: tempNum,
+            gas: gasNum,
+            timestamp: serverTimestamp()
+          });
+          
+          // Update last log timestamp
+          await set(lastLogRef, now);
+          
+          console.log(`[Server] ESP32 Data logged via API (Interval respected):`, { temperature: tempNum, gas: gasNum, id: newLogRef.key });
+        } else {
+          console.log(`[Server] ESP32 Data ignored (Too frequent):`, { 
+            temperature: tempNum, 
+            gas: gasNum, 
+            timeSinceLast: now - lastLogTime,
+            requiredInterval: interval 
+          });
+          return res.json({ 
+            success: true, 
+            ignored: true,
+            message: "Data ignored to respect logging interval" 
+          });
+        }
       } else {
         console.log(`[Server] ESP32 Data received via API but logging is OFF:`, { temperature: tempNum, gas: gasNum });
       }
@@ -346,12 +371,12 @@ async function startServer() {
         
         if (riskLevel === 'Dangerous') {
           const dangerousCooldown = 60 * 1000; // 1 minute anti-spam for dangerous
-          if (timeSinceLast > dangerousCooldown) {
+          if (timeSinceLast >= dangerousCooldown) {
             shouldNotify = true;
             console.log(`[Server] [Listener] IMMEDIATE ALERT: Dangerous level detected!`);
           }
         } else {
-          if (timeSinceLast > frequencyCooldown) {
+          if (timeSinceLast >= frequencyCooldown) {
             shouldNotify = true;
             notificationType = riskLevel === 'Normal' ? 'status_update' : 'alert';
             console.log(`[Server] [Listener] FREQUENCY UPDATE: Sending ${notificationType} (${riskLevel})`);
