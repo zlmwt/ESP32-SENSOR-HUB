@@ -3,6 +3,7 @@ import { db } from '../firebase';
 
 export interface SimulatedData {
   temperature: number;
+  humidity: number;
   gas: number;
   timestamp: Date;
 }
@@ -10,6 +11,8 @@ export interface SimulatedData {
 export interface SimulationConfig {
   tempMin: number;
   tempMax: number;
+  humidityMin: number;
+  humidityMax: number;
   gasMin: number;
   gasMax: number;
   noise: number; // 0 to 1
@@ -21,7 +24,9 @@ export class ESP32Simulator {
   private config: SimulationConfig = {
     tempMin: 22,
     tempMax: 30,
-    gasMin: 150,
+    humidityMin: 40,
+    humidityMax: 80,
+    gasMin: 0,
     gasMax: 500,
     noise: 0.5
   };
@@ -48,6 +53,7 @@ export class ESP32Simulator {
 
       const data: SimulatedData = {
         temperature: generateValue(this.config.tempMin, this.config.tempMax, this.config.noise),
+        humidity: generateValue(this.config.humidityMin, this.config.humidityMax, this.config.noise),
         gas: generateValue(this.config.gasMin, this.config.gasMax, this.config.noise),
         timestamp: new Date()
       };
@@ -58,6 +64,7 @@ export class ESP32Simulator {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             temperature: data.temperature,
+            humidity: data.humidity,
             gas: data.gas
           })
         });

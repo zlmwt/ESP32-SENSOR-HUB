@@ -1,8 +1,9 @@
 export interface SensorData {
   id?: string;
   temperature: number;
+  humidity: number;
   gas: number;
-  timestamp: any; // Firestore Timestamp
+  timestamp: any; // Firestore Timestamp or String
 }
 
 export type NotificationFrequency = 'minute' | 'hour' | 'day';

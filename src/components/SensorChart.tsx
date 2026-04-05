@@ -14,12 +14,17 @@ import { SensorData } from '../types';
 
 interface SensorChartProps {
   data: SensorData[];
+  dataKey: keyof SensorData;
+  color: string;
+  title: string;
+  unit: string;
+  icon: React.ReactNode;
 }
 
-const CustomTooltip = ({ active, payload, label }: any) => {
+const CustomTooltip = ({ active, payload, label, unit }: any) => {
   if (active && payload && payload.length) {
     return (
-      <div className="glass-card p-4 rounded-xl border border-white/10 shadow-2xl">
+      <div className="glass-card p-4 rounded-xl border border-white/10 shadow-2xl backdrop-blur-2xl">
         <p className="text-[10px] font-black text-white/30 uppercase tracking-widest mb-2">{label}</p>
         <div className="space-y-1">
           {payload.map((entry: any, index: number) => (
@@ -27,8 +32,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
               <div className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
               <span className="text-xs font-bold text-white/80">{entry.name}:</span>
               <span className="text-xs font-mono font-bold" style={{ color: entry.color }}>
-                {entry.value?.toFixed(1) ?? '0.0'}
-                {entry.name.includes('Temp') ? '°C' : ' PPM'}
+                {entry.value?.toFixed(1) ?? '0.0'}{unit}
               </span>
             </div>
           ))}
@@ -39,117 +43,110 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
-export const SensorChart: React.FC<SensorChartProps> = ({ data }) => {
+export const SensorChart: React.FC<SensorChartProps> = ({ data, dataKey, color, title, unit, icon }) => {
   const [chartData, setChartData] = useState<any[]>([]);
 
   useEffect(() => {
-    const formatted = data.map(d => ({
-      ...d,
-      time: d.timestamp ? (
-        typeof d.timestamp === 'number' 
-          ? format(new Date(d.timestamp), 'HH:mm:ss')
-          : d.timestamp.toDate 
-            ? format(d.timestamp.toDate(), 'HH:mm:ss')
-            : '...'
-      ) : '...',
-      temperature: d.temperature,
-      gas: d.gas
-    })).reverse();
+    const formatted = data.map(d => {
+      let timeStr = '...';
+      if (d.timestamp) {
+        if (typeof d.timestamp === 'string') {
+          timeStr = d.timestamp.split(' ')[1] || d.timestamp;
+        } else if (typeof d.timestamp === 'number') {
+          timeStr = format(new Date(d.timestamp), 'HH:mm:ss');
+        } else if (d.timestamp.toDate) {
+          timeStr = format(d.timestamp.toDate(), 'HH:mm:ss');
+        }
+      }
+      
+      return {
+        ...d,
+        time: timeStr,
+        value: d[dataKey]
+      };
+    }).reverse();
     setChartData(formatted);
-  }, [data]);
+  }, [data, dataKey]);
+
+  const gradientId = `color-${dataKey}`;
 
   return (
     <motion.div 
-      initial={{ opacity: 0, scale: 0.95 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ duration: 0.5, ease: "easeOut" }}
-      className="w-full h-[500px] glass-card rounded-3xl p-8 relative overflow-hidden group"
+      initial={{ opacity: 0, y: 20 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true }}
+      transition={{ duration: 0.6, ease: "easeOut" }}
+      className="w-full h-[350px] glass-card rounded-[2.5rem] p-8 relative overflow-hidden group border border-white/5 hover:border-white/20 transition-all duration-500"
     >
-      <div className="flex items-center justify-between mb-8">
-        <div className="flex items-center gap-3">
-          <div className="w-2 h-6 bg-emerald-500 rounded-full" />
-          <h3 className="text-xl font-black text-white uppercase tracking-tighter">Sensor History</h3>
+      {/* Background Glow */}
+      <div 
+        className="absolute -top-24 -right-24 w-64 h-64 blur-[120px] opacity-20 pointer-events-none transition-all duration-700 group-hover:opacity-30"
+        style={{ backgroundColor: color }}
+      />
+      
+      <div className="flex items-center justify-between mb-8 relative z-10">
+        <div className="flex items-center gap-4">
+          <div className="p-3 rounded-2xl bg-white/5 border border-white/10 shadow-inner group-hover:scale-110 transition-transform duration-500">
+            {React.cloneElement(icon as React.ReactElement, { size: 20, style: { color } })}
+          </div>
+          <div>
+            <h3 className="text-lg font-black text-white uppercase tracking-tighter italic leading-none">{title}</h3>
+            <p className="text-[10px] text-white/40 font-mono uppercase tracking-[0.2em] mt-1">Historical Analytics</p>
+          </div>
         </div>
-        <div className="flex gap-4">
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-emerald-500 glow-emerald" />
-            <span className="text-[10px] font-black text-white/60 uppercase tracking-widest">Temperature</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-amber-500 glow-amber" />
-            <span className="text-[10px] font-black text-white/60 uppercase tracking-widest">Gas Level</span>
-          </div>
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/10">
+          <div className="w-2 h-2 rounded-full animate-pulse" style={{ backgroundColor: color }} />
+          <span className="text-[10px] font-black text-white/60 uppercase tracking-widest">Live</span>
         </div>
       </div>
       
-      <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-          <defs>
-            <linearGradient id="colorTemp" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
-              <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-            </linearGradient>
-            <linearGradient id="colorGas" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3}/>
-              <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
-            </linearGradient>
-          </defs>
-          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.1)" />
-          <XAxis 
-            dataKey="time" 
-            stroke="rgba(255,255,255,0.5)" 
-            fontSize={10}
-            tickLine={false}
-            axisLine={false}
-            dy={10}
-            fontFamily="JetBrains Mono"
-          />
-          <YAxis 
-            yAxisId="left"
-            stroke="rgba(255,255,255,0.5)" 
-            fontSize={10}
-            tickLine={false}
-            axisLine={false}
-            fontFamily="JetBrains Mono"
-          />
-          <YAxis 
-            yAxisId="right"
-            orientation="right"
-            stroke="rgba(255,255,255,0.5)" 
-            fontSize={10}
-            tickLine={false}
-            axisLine={false}
-            fontFamily="JetBrains Mono"
-          />
-          <Tooltip content={<CustomTooltip />} cursor={{ stroke: 'rgba(255,255,255,0.1)', strokeWidth: 1 }} />
-          <Area 
-            yAxisId="left"
-            type="monotone" 
-            dataKey="temperature" 
-            stroke="#10b981" 
-            strokeWidth={3}
-            fillOpacity={1}
-            fill="url(#colorTemp)"
-            name="Temperature"
-            animationDuration={1000}
-            animationEasing="ease-in-out"
-            isAnimationActive={true}
-          />
-          <Area 
-            yAxisId="right"
-            type="monotone" 
-            dataKey="gas" 
-            stroke="#f59e0b" 
-            strokeWidth={3}
-            fillOpacity={1}
-            fill="url(#colorGas)"
-            name="Gas Level"
-            animationDuration={1000}
-            animationEasing="ease-in-out"
-            isAnimationActive={true}
-          />
-        </AreaChart>
-      </ResponsiveContainer>
+      <div className="h-[200px] w-full relative z-10">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+            <defs>
+              <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor={color} stopOpacity={0.4}/>
+                <stop offset="95%" stopColor={color} stopOpacity={0}/>
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.05)" />
+            <XAxis 
+              dataKey="time" 
+              stroke="rgba(255,255,255,0.3)" 
+              fontSize={9}
+              tickLine={false}
+              axisLine={false}
+              dy={10}
+              fontFamily="JetBrains Mono"
+              interval="preserveStartEnd"
+            />
+            <YAxis 
+              stroke="rgba(255,255,255,0.3)" 
+              fontSize={9}
+              tickLine={false}
+              axisLine={false}
+              fontFamily="JetBrains Mono"
+              tickFormatter={(val) => `${val}${unit === ' PPM' ? '' : unit}`}
+            />
+            <Tooltip 
+              content={<CustomTooltip unit={unit} />} 
+              cursor={{ stroke: color, strokeWidth: 1, strokeDasharray: '4 4' }} 
+            />
+            <Area 
+              type="monotone" 
+              dataKey="value" 
+              stroke={color} 
+              strokeWidth={4}
+              fillOpacity={1}
+              fill={`url(#${gradientId})`}
+              name={title}
+              animationDuration={1500}
+              animationEasing="ease-in-out"
+              isAnimationActive={true}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
     </motion.div>
   );
 };

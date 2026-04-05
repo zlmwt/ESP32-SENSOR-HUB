@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertTriangle, CheckCircle, AlertCircle, ShieldAlert, Thermometer, Wind } from 'lucide-react';
+import { AlertTriangle, CheckCircle, AlertCircle, ShieldAlert, Thermometer, Wind, Droplets } from 'lucide-react';
 import { SensorData } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -21,12 +21,19 @@ interface RiskInfo {
 export const RiskAnalysis: React.FC<RiskAnalysisProps> = ({ currentData }) => {
   if (!currentData) return null;
 
-  const { temperature, gas } = currentData;
+  const { temperature, humidity, gas } = currentData;
 
   const getTemperatureRisk = (temp: number): RiskLevel => {
     if (temp >= 18 && temp <= 30) return 'Normal';
     if ((temp > 30 && temp <= 40) || (temp >= 10 && temp < 18)) return 'Low Risk';
     if ((temp > 40 && temp <= 50) || (temp >= 0 && temp < 10)) return 'Medium Risk';
+    return 'Dangerous';
+  };
+
+  const getHumidityRisk = (hum: number): RiskLevel => {
+    if (hum >= 30 && hum <= 60) return 'Normal';
+    if ((hum > 60 && hum <= 80) || (hum >= 20 && hum < 30)) return 'Low Risk';
+    if ((hum > 80 && hum <= 90) || (hum >= 10 && hum < 20)) return 'Medium Risk';
     return 'Dangerous';
   };
 
@@ -46,6 +53,7 @@ export const RiskAnalysis: React.FC<RiskAnalysisProps> = ({ currentData }) => {
 
   const gasCategory = getGasCategory(gas);
   const tempRisk = getTemperatureRisk(temperature);
+  const humRisk = getHumidityRisk(humidity);
   const gasRisk = getGasRisk(gas);
 
   const riskPriority: Record<RiskLevel, number> = {
@@ -55,7 +63,8 @@ export const RiskAnalysis: React.FC<RiskAnalysisProps> = ({ currentData }) => {
     'Dangerous': 3,
   };
 
-  const overallRiskLevel: RiskLevel = riskPriority[tempRisk] >= riskPriority[gasRisk] ? tempRisk : gasRisk;
+  const overallRiskLevel: RiskLevel = [tempRisk, humRisk, gasRisk].reduce((prev, curr) => 
+    riskPriority[curr] > riskPriority[prev] ? curr : prev, 'Normal' as RiskLevel);
 
   const riskConfig: Record<RiskLevel, RiskInfo> = {
     'Normal': {
@@ -64,7 +73,7 @@ export const RiskAnalysis: React.FC<RiskAnalysisProps> = ({ currentData }) => {
       bgColor: 'bg-emerald-500/10',
       borderColor: 'border-emerald-500/20',
       icon: <CheckCircle className="text-emerald-400" size={24} />,
-      message: 'All systems are within safe operating parameters. No action required.',
+      message: 'All systems are within safe operating parameters. DHT22 and MQ2 sensors reporting normal levels.',
     },
     'Low Risk': {
       level: 'Low Risk',
@@ -72,7 +81,7 @@ export const RiskAnalysis: React.FC<RiskAnalysisProps> = ({ currentData }) => {
       bgColor: 'bg-amber-500/10',
       borderColor: 'border-amber-500/20',
       icon: <AlertCircle className="text-amber-400" size={24} />,
-      message: 'Minor deviation detected. Monitor the situation closely.',
+      message: 'Minor deviation detected in sensor readings. Monitor the situation closely.',
     },
     'Medium Risk': {
       level: 'Medium Risk',
@@ -80,7 +89,7 @@ export const RiskAnalysis: React.FC<RiskAnalysisProps> = ({ currentData }) => {
       bgColor: 'bg-orange-500/10',
       borderColor: 'border-orange-500/20',
       icon: <AlertTriangle className="text-orange-400" size={24} />,
-      message: 'Significant deviation from normal levels. Investigate potential causes.',
+      message: 'Significant deviation from normal levels. Investigate potential causes in the environment.',
     },
     'Dangerous': {
       level: 'Dangerous',
@@ -88,7 +97,7 @@ export const RiskAnalysis: React.FC<RiskAnalysisProps> = ({ currentData }) => {
       bgColor: 'bg-red-500/10',
       borderColor: 'border-red-500/20',
       icon: <ShieldAlert className="text-red-400" size={24} />,
-      message: 'CRITICAL: Levels are outside safe limits. Immediate action may be required!',
+      message: 'CRITICAL: Levels are outside safe limits. Immediate action may be required to ensure safety!',
     },
   };
 
@@ -135,6 +144,13 @@ export const RiskAnalysis: React.FC<RiskAnalysisProps> = ({ currentData }) => {
                 </motion.div>
                 <motion.div 
                   layout
+                  className={`flex flex-col items-end px-4 py-2 rounded-xl border ${humRisk === 'Normal' ? 'border-emerald-500/50 bg-emerald-500/10' : 'border-red-500/50 bg-red-500/10'}`}
+                >
+                  <span className="text-[8px] font-black text-white/60 uppercase tracking-widest">Humidity</span>
+                  <span className={`text-xs font-mono font-bold ${humRisk === 'Normal' ? 'text-emerald-400' : 'text-red-400'}`}>{humRisk}</span>
+                </motion.div>
+                <motion.div 
+                  layout
                   className={`flex flex-col items-end px-4 py-2 rounded-xl border ${gasRisk === 'Normal' ? 'border-emerald-500/50 bg-emerald-500/10' : 'border-red-500/50 bg-red-500/10'}`}
                 >
                   <span className="text-[8px] font-black text-white/60 uppercase tracking-widest">Gas Status</span>
@@ -153,7 +169,7 @@ export const RiskAnalysis: React.FC<RiskAnalysisProps> = ({ currentData }) => {
               </p>
             </motion.div>
             
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <motion.div 
                 whileHover={{ scale: 1.02, x: 5 }}
                 className="glass-card bg-white/5 rounded-2xl p-5 border-white/10 group/card hover:bg-white/10 transition-all"
@@ -165,6 +181,19 @@ export const RiskAnalysis: React.FC<RiskAnalysisProps> = ({ currentData }) => {
                 <p className="text-sm text-white/80 font-medium">
                   Current reading <span className="text-emerald-400 font-mono font-bold">{temperature?.toFixed(1) ?? '0.0'}°C</span> is {tempRisk.toLowerCase()}. 
                   {tempRisk === 'Normal' ? ' Temperature is stable and safe.' : ' Please check the room temperature.'}
+                </p>
+              </motion.div>
+              <motion.div 
+                whileHover={{ scale: 1.02, x: 5 }}
+                className="glass-card bg-white/5 rounded-2xl p-5 border-white/10 group/card hover:bg-white/10 transition-all"
+              >
+                <div className="flex items-center gap-3 mb-3">
+                  <Droplets size={16} className="text-blue-400" />
+                  <p className="text-[10px] text-white/60 uppercase font-black tracking-widest">Humidity</p>
+                </div>
+                <p className="text-sm text-white/80 font-medium">
+                  Current reading <span className="text-blue-400 font-mono font-bold">{humidity?.toFixed(1) ?? '0.0'}%</span> is {humRisk.toLowerCase()}. 
+                  {humRisk === 'Normal' ? ' Humidity is stable and safe.' : ' Please check the room humidity.'}
                 </p>
               </motion.div>
               <motion.div 

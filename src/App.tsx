@@ -25,7 +25,7 @@ import { RiskAnalysis } from './components/RiskAnalysis';
 import { LoginPage } from './components/LoginPage';
 import { VirtualDeviceConsole } from './components/VirtualDeviceConsole';
 import { ESP32Simulator, SimulatedData, SimulationConfig } from './services/esp32Simulator';
-import { Activity, Thermometer, Wind, RefreshCw, Cpu, Settings, LogOut, Send, AlertTriangle } from 'lucide-react';
+import { Activity, Thermometer, Wind, RefreshCw, Cpu, Settings, LogOut, Send, AlertTriangle, Droplets } from 'lucide-react';
 import { ESP32ConnectionGuide } from './components/ESP32ConnectionGuide';
 import { SimulationSettings } from './components/SimulationSettings';
 import { DataRetentionSettings } from './components/DataRetentionSettings';
@@ -43,8 +43,10 @@ export function App() {
   const [simConfig, setSimConfig] = useState<SimulationConfig>({
     tempMin: 22,
     tempMax: 30,
-    gasMin: 200,
-    gasMax: 6000,
+    humidityMin: 40,
+    humidityMax: 80,
+    gasMin: 0,
+    gasMax: 500,
     noise: 0.5
   });
   const [simulator] = useState(() => new ESP32Simulator((data) => {
@@ -54,7 +56,7 @@ export function App() {
   const [lastRiskLevel, setLastRiskLevel] = useState<string>('Normal');
   const [lastLoggingState, setLastLoggingState] = useState<boolean | null>(null);
   const [isDeviceConnected, setIsDeviceConnected] = useState<boolean>(false);
-  const [manualData, setManualData] = useState({ temperature: 25, gas: 200 });
+  const [manualData, setManualData] = useState({ temperature: 25, humidity: 50, gas: 200 });
   const [isFirebaseReady, setIsFirebaseReady] = useState(false);
 
   // Initialize Firebase Auth
@@ -166,11 +168,17 @@ export function App() {
   }, [settings?.isLogging]);
 
   // Risk Analysis Logic
-  const getRiskLevel = (temp: number, ppm: number) => {
+  const getRiskLevel = (temp: number, humidity: number, ppm: number) => {
     const getTempRisk = (t: number) => {
       if (t >= 18 && t <= 30) return 0; // Normal
       if ((t > 30 && t <= 40) || (t >= 10 && t < 18)) return 1; // Low
       if ((t > 40 && t <= 50) || (t >= 0 && t < 10)) return 2; // Medium
+      return 3; // Dangerous
+    };
+    const getHumidityRisk = (h: number) => {
+      if (h >= 30 && h <= 60) return 0; // Normal
+      if ((h > 60 && h <= 80) || (h >= 20 && h < 30)) return 1; // Low
+      if ((h > 80 && h <= 90) || (h >= 10 && h < 20)) return 2; // Medium
       return 3; // Dangerous
     };
     const getGasRisk = (p: number) => {
@@ -180,9 +188,30 @@ export function App() {
       return 3; // Gas Leak (5000+)
     };
     const levels = ['Normal', 'Low Risk', 'Medium Risk', 'Dangerous'];
-    const maxRisk = Math.max(getTempRisk(temp), getGasRisk(ppm));
+    const maxRisk = Math.max(getTempRisk(temp), getHumidityRisk(humidity), getGasRisk(ppm));
     return levels[maxRisk];
   };
+
+  // Statistics Calculation
+  const stats = React.useMemo(() => {
+    if (logs.length === 0) return null;
+    
+    const calculate = (key: 'temperature' | 'humidity' | 'gas') => {
+      const values = logs.map(l => l[key]).filter(v => v !== undefined);
+      if (values.length === 0) return { current: 0, avg: 0, max: 0 };
+      return {
+        current: values[0],
+        avg: values.reduce((a, b) => a + b, 0) / values.length,
+        max: Math.max(...values)
+      };
+    };
+
+    return {
+      temp: calculate('temperature'),
+      hum: calculate('humidity'),
+      gas: calculate('gas')
+    };
+  }, [logs]);
 
   // Notification Monitor (Removed client-side alert logic as it's now handled server-side via API)
   // This prevents duplicate notifications and ensures alerts work when tab is closed.
@@ -517,77 +546,134 @@ export function App() {
           />
         </motion.div>
 
-        {/* 2. Temperature and Gas Concentration */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12">
+        {/* 2. Sensor Cards (Temperature, Humidity, Gas) */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-12">
+          {/* Temperature Card */}
           <motion.div 
             variants={itemVariants}
             whileHover={{ scale: 1.02, y: -5 }}
             whileTap={{ scale: 0.98 }}
             layout
-            className="glass-card rounded-3xl p-10 relative overflow-hidden group glow-emerald"
+            className="glass-card rounded-3xl p-8 relative overflow-hidden group glow-emerald"
           >
             <div className="absolute top-0 right-0 p-6 opacity-15 group-hover:opacity-30 transition-all duration-700">
-              <Thermometer size={160} className="text-emerald-500/40 drop-shadow-[0_0_15px_rgba(16,185,129,0.4)]" />
+              <Thermometer size={120} className="text-emerald-500/40 drop-shadow-[0_0_15px_rgba(16,185,129,0.4)]" />
             </div>
             <div className="flex items-center gap-3 mb-6">
-              <div className="w-2 h-8 bg-emerald-500 rounded-full" />
-              <p className="text-emerald-400 text-xs font-black uppercase tracking-[0.3em]">Temperature</p>
+              <div className="relative">
+                <div className="w-2 h-6 bg-emerald-500 rounded-full" />
+                <div className="absolute inset-0 bg-emerald-500/50 blur-sm rounded-full animate-pulse" />
+              </div>
+              <p className="text-emerald-400 text-[10px] font-black uppercase tracking-[0.3em]">DHT22 Temperature</p>
             </div>
-            <div className="flex items-baseline gap-3">
-              {logs[0] ? (
-                <>
-                  <h2 className="text-8xl font-black font-mono tracking-tighter text-glow text-emerald-400">
-                    {logs[0].temperature?.toFixed(1) ?? '0.0'}
+            
+            <div className="space-y-6">
+              <div>
+                <p className="text-white/30 text-[10px] font-black uppercase tracking-widest mb-1">Current</p>
+                <div className="flex items-baseline gap-2">
+                  <h2 className="text-5xl font-black font-mono tracking-tighter text-glow text-emerald-400">
+                    {stats?.temp.current.toFixed(1) ?? '0.0'}
                   </h2>
-                  <span className="text-3xl text-white/30 font-mono">°C</span>
-                </>
-              ) : (
-                <div className="flex flex-col gap-4">
-                  <img 
-                    src="https://picsum.photos/seed/temp/200/100?grayscale&blur=2" 
-                    alt="Waiting for data" 
-                    className="rounded-2xl opacity-20 h-24 w-48 object-cover"
-                    referrerPolicy="no-referrer"
-                  />
-                  <span className="text-white/20 font-mono text-xl animate-pulse">WAITING...</span>
+                  <span className="text-xl text-white/30 font-mono">°C</span>
                 </div>
-              )}
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4 pt-4 border-t border-white/5">
+                <div>
+                  <p className="text-white/20 text-[8px] font-black uppercase tracking-widest mb-1">Average</p>
+                  <p className="text-lg font-bold font-mono text-white/60">{stats?.temp.avg.toFixed(1) ?? '0.0'}°C</p>
+                </div>
+                <div>
+                  <p className="text-white/20 text-[8px] font-black uppercase tracking-widest mb-1">Maximum</p>
+                  <p className="text-lg font-bold font-mono text-white/60">{stats?.temp.max.toFixed(1) ?? '0.0'}°C</p>
+                </div>
+              </div>
             </div>
           </motion.div>
 
+          {/* Humidity Card */}
           <motion.div 
             variants={itemVariants}
             whileHover={{ scale: 1.02, y: -5 }}
             whileTap={{ scale: 0.98 }}
             layout
-            className="glass-card rounded-3xl p-10 relative overflow-hidden group glow-amber"
+            className="glass-card rounded-3xl p-8 relative overflow-hidden group glow-blue"
           >
             <div className="absolute top-0 right-0 p-6 opacity-15 group-hover:opacity-30 transition-all duration-700">
-              <Wind size={160} className="text-amber-500/40 drop-shadow-[0_0_15px_rgba(245,158,11,0.4)]" />
+              <Droplets size={120} className="text-blue-500/40 drop-shadow-[0_0_15px_rgba(59,130,246,0.4)]" />
             </div>
             <div className="flex items-center gap-3 mb-6">
-              <div className="w-2 h-8 bg-amber-500 rounded-full" />
-              <p className="text-amber-400 text-xs font-black uppercase tracking-[0.3em]">Gas Concentration</p>
+              <div className="relative">
+                <div className="w-2 h-6 bg-blue-500 rounded-full" />
+                <div className="absolute inset-0 bg-blue-500/50 blur-sm rounded-full animate-pulse" />
+              </div>
+              <p className="text-blue-400 text-[10px] font-black uppercase tracking-[0.3em]">DHT22 Humidity</p>
             </div>
-            <div className="flex items-baseline gap-3">
-              {logs[0] ? (
-                <>
-                  <h2 className="text-8xl font-black font-mono tracking-tighter text-glow text-amber-400">
-                    {logs[0].gas?.toFixed(0) ?? '0'}
+            
+            <div className="space-y-6">
+              <div>
+                <p className="text-white/30 text-[10px] font-black uppercase tracking-widest mb-1">Current</p>
+                <div className="flex items-baseline gap-2">
+                  <h2 className="text-5xl font-black font-mono tracking-tighter text-glow text-blue-400">
+                    {stats?.hum.current.toFixed(1) ?? '0.0'}
                   </h2>
-                  <span className="text-3xl text-white/30 font-mono">PPM</span>
-                </>
-              ) : (
-                <div className="flex flex-col gap-4">
-                  <img 
-                    src="https://picsum.photos/seed/gas/200/100?grayscale&blur=2" 
-                    alt="Waiting for data" 
-                    className="rounded-2xl opacity-20 h-24 w-48 object-cover"
-                    referrerPolicy="no-referrer"
-                  />
-                  <span className="text-white/20 font-mono text-xl animate-pulse">WAITING...</span>
+                  <span className="text-xl text-white/30 font-mono">%</span>
                 </div>
-              )}
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4 pt-4 border-t border-white/5">
+                <div>
+                  <p className="text-white/20 text-[8px] font-black uppercase tracking-widest mb-1">Average</p>
+                  <p className="text-lg font-bold font-mono text-white/60">{stats?.hum.avg.toFixed(1) ?? '0.0'}%</p>
+                </div>
+                <div>
+                  <p className="text-white/20 text-[8px] font-black uppercase tracking-widest mb-1">Maximum</p>
+                  <p className="text-lg font-bold font-mono text-white/60">{stats?.hum.max.toFixed(1) ?? '0.0'}%</p>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+
+          {/* Gas Card */}
+          <motion.div 
+            variants={itemVariants}
+            whileHover={{ scale: 1.02, y: -5 }}
+            whileTap={{ scale: 0.98 }}
+            layout
+            className="glass-card rounded-3xl p-8 relative overflow-hidden group glow-amber"
+          >
+            <div className="absolute top-0 right-0 p-6 opacity-15 group-hover:opacity-30 transition-all duration-700">
+              <Wind size={120} className="text-amber-500/40 drop-shadow-[0_0_15px_rgba(245,158,11,0.4)]" />
+            </div>
+            <div className="flex items-center gap-3 mb-6">
+              <div className="relative">
+                <div className="w-2 h-6 bg-amber-500 rounded-full" />
+                <div className="absolute inset-0 bg-amber-500/50 blur-sm rounded-full animate-pulse" />
+              </div>
+              <p className="text-amber-400 text-[10px] font-black uppercase tracking-[0.3em]">MQ2 Gas Sensor</p>
+            </div>
+            
+            <div className="space-y-6">
+              <div>
+                <p className="text-white/30 text-[10px] font-black uppercase tracking-widest mb-1">Current</p>
+                <div className="flex items-baseline gap-2">
+                  <h2 className="text-5xl font-black font-mono tracking-tighter text-glow text-amber-400">
+                    {stats?.gas.current.toFixed(0) ?? '0'}
+                  </h2>
+                  <span className="text-xl text-white/30 font-mono">PPM</span>
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4 pt-4 border-t border-white/5">
+                <div>
+                  <p className="text-white/20 text-[8px] font-black uppercase tracking-widest mb-1">Average</p>
+                  <p className="text-lg font-bold font-mono text-white/60">{stats?.gas.avg.toFixed(0) ?? '0'} PPM</p>
+                </div>
+                <div>
+                  <p className="text-white/20 text-[8px] font-black uppercase tracking-widest mb-1">Maximum</p>
+                  <p className="text-lg font-bold font-mono text-white/60">{stats?.gas.max.toFixed(0) ?? '0'} PPM</p>
+                </div>
+              </div>
             </div>
           </motion.div>
         </div>
@@ -600,14 +686,40 @@ export function App() {
           <RiskAnalysis currentData={logs[0]} />
         </motion.div>
 
-        {/* 3. Sensor Comparison (Chart) */}
-        <motion.div 
-          variants={itemVariants}
-          className="mb-12"
-          layout
-        >
-          <SensorChart data={logs} />
-        </motion.div>
+        {/* 3. Sensor Comparison (Charts) */}
+        <div className="mb-16">
+          <div className="flex items-center gap-4 mb-8">
+            <div className="h-[1px] flex-1 bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+            <h2 className="text-sm font-black text-white/40 uppercase tracking-[0.5em] italic">Historical Analytics</h2>
+            <div className="h-[1px] flex-1 bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <SensorChart 
+              data={logs} 
+              dataKey="temperature" 
+              color="#10b981" 
+              title="Temperature" 
+              unit="°C" 
+              icon={<Thermometer />}
+            />
+            <SensorChart 
+              data={logs} 
+              dataKey="humidity" 
+              color="#3b82f6" 
+              title="Humidity" 
+              unit="%" 
+              icon={<Droplets />}
+            />
+            <SensorChart 
+              data={logs} 
+              dataKey="gas" 
+              color="#f59e0b" 
+              title="Gas Level" 
+              unit=" PPM" 
+              icon={<Wind />}
+            />
+          </div>
+        </div>
 
         {/* 4. Last 10 Logs (Table) */}
         <motion.div 
@@ -663,7 +775,7 @@ export function App() {
             <div className="flex flex-wrap gap-3">
               <button
                 onClick={() => {
-                  setManualData({ temperature: 25, gas: 300 });
+                  setManualData({ temperature: 25, humidity: 45, gas: 300 });
                   setTimeout(handleManualInput, 100);
                 }}
                 disabled={!settings?.isLogging}
@@ -673,7 +785,7 @@ export function App() {
               </button>
               <button
                 onClick={() => {
-                  setManualData({ temperature: 26, gas: 600 });
+                  setManualData({ temperature: 26, humidity: 55, gas: 600 });
                   setTimeout(handleManualInput, 100);
                 }}
                 disabled={!settings?.isLogging}
@@ -683,7 +795,7 @@ export function App() {
               </button>
               <button
                 onClick={() => {
-                  setManualData({ temperature: 35, gas: 2500 });
+                  setManualData({ temperature: 35, humidity: 75, gas: 2500 });
                   setTimeout(handleManualInput, 100);
                 }}
                 disabled={!settings?.isLogging}
@@ -693,7 +805,7 @@ export function App() {
               </button>
               <button
                 onClick={() => {
-                  setManualData({ temperature: 28, gas: 6500 });
+                  setManualData({ temperature: 28, humidity: 85, gas: 6500 });
                   setTimeout(handleManualInput, 100);
                 }}
                 disabled={!settings?.isLogging}
@@ -704,7 +816,7 @@ export function App() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-end">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-8 items-end">
             <div className="space-y-3">
               <label className="block text-[10px] font-black text-white/60 uppercase tracking-[0.3em]">Temperature (°C)</label>
               <input
@@ -712,6 +824,15 @@ export function App() {
                 value={manualData.temperature}
                 onChange={(e) => setManualData(prev => ({ ...prev, temperature: Number(e.target.value) }))}
                 className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 text-white font-mono text-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all"
+              />
+            </div>
+            <div className="space-y-3">
+              <label className="block text-[10px] font-black text-white/60 uppercase tracking-[0.3em]">Humidity (%)</label>
+              <input
+                type="number"
+                value={manualData.humidity}
+                onChange={(e) => setManualData(prev => ({ ...prev, humidity: Number(e.target.value) }))}
+                className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 text-white font-mono text-xl focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
               />
             </div>
             <div className="space-y-3">

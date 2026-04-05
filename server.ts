@@ -73,11 +73,17 @@ async function startServer() {
   });
 
   // Helper for Risk Analysis (Server-side)
-  const getRiskLevel = (temp: number, ppm: number) => {
+  const getRiskLevel = (temp: number, humidity: number, ppm: number) => {
     const getTempRisk = (t: number) => {
       if (t >= 18 && t <= 30) return 0; // Normal
       if ((t > 30 && t <= 40) || (t >= 10 && t < 18)) return 1; // Low
       if ((t > 40 && t <= 50) || (t >= 0 && t < 10)) return 2; // Medium
+      return 3; // Dangerous
+    };
+    const getHumidityRisk = (h: number) => {
+      if (h >= 30 && h <= 60) return 0; // Normal
+      if ((h > 60 && h <= 80) || (h >= 20 && h < 30)) return 1; // Low
+      if ((h > 80 && h <= 90) || (h >= 10 && h < 20)) return 2; // Medium
       return 3; // Dangerous
     };
     const getGasRisk = (p: number) => {
@@ -87,13 +93,19 @@ async function startServer() {
       return 3; // Gas Leak (5000+)
     };
     const levels = ['Normal', 'Low Risk', 'Medium Risk', 'Dangerous'];
-    const maxRisk = Math.max(getTempRisk(temp), getGasRisk(ppm));
+    const maxRisk = Math.max(getTempRisk(temp), getHumidityRisk(humidity), getGasRisk(ppm));
     return levels[maxRisk];
+  };
+
+  // Helper to format date as YYYY-MM-DD HH:MM:SS
+  const formatTimestamp = (date: Date) => {
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
   };
 
   // ESP32 Data Logging API
   app.post("/api/esp32/log", async (req, res) => {
-    const { temperature, gas } = req.body;
+    const { temperature, humidity, gas } = req.body;
     
     // Ensure authenticated before database operations
     const isAuth = await ensureAuthenticated();
@@ -105,9 +117,10 @@ async function startServer() {
     }
 
     // Validate presence
-    if (temperature === undefined || gas === undefined) {
+    if (temperature === undefined || humidity === undefined || gas === undefined) {
       const missing = [];
       if (temperature === undefined) missing.push("temperature");
+      if (humidity === undefined) missing.push("humidity");
       if (gas === undefined) missing.push("gas");
       return res.status(400).json({ 
         error: `Missing required fields: ${missing.join(", ")}`,
@@ -117,15 +130,17 @@ async function startServer() {
 
     // Validate types
     const tempNum = Number(temperature);
+    const humNum = Number(humidity);
     const gasNum = Number(gas);
 
-    if (isNaN(tempNum) || isNaN(gasNum)) {
+    if (isNaN(tempNum) || isNaN(humNum) || isNaN(gasNum)) {
       const invalid = [];
       if (isNaN(tempNum)) invalid.push("temperature");
+      if (isNaN(humNum)) invalid.push("humidity");
       if (isNaN(gasNum)) invalid.push("gas");
       return res.status(400).json({ 
         error: `Invalid data format for: ${invalid.join(", ")}. Values must be numeric.`,
-        received: { temperature, gas }
+        received: { temperature, humidity, gas }
       });
     }
 
@@ -151,17 +166,19 @@ async function startServer() {
           
           newLogRef = await push(logsRef, {
             temperature: tempNum,
+            humidity: humNum,
             gas: gasNum,
-            timestamp: serverTimestamp()
+            timestamp: formatTimestamp(new Date())
           });
           
           // Update last log timestamp
           await set(lastLogRef, now);
           
-          console.log(`[Server] ESP32 Data logged via API (Interval respected):`, { temperature: tempNum, gas: gasNum, id: newLogRef.key });
+          console.log(`[Server] ESP32 Data logged via API (Interval respected):`, { temperature: tempNum, humidity: humNum, gas: gasNum, id: newLogRef.key });
         } else {
           console.log(`[Server] ESP32 Data ignored (Too frequent):`, { 
             temperature: tempNum, 
+            humidity: humNum,
             gas: gasNum, 
             timeSinceLast: now - lastLogTime,
             requiredInterval: interval 
@@ -173,7 +190,7 @@ async function startServer() {
           });
         }
       } else {
-        console.log(`[Server] ESP32 Data received via API but logging is OFF:`, { temperature: tempNum, gas: gasNum });
+        console.log(`[Server] ESP32 Data received via API but logging is OFF:`, { temperature: tempNum, humidity: humNum, gas: gasNum });
       }
 
       // Note: Risk Analysis and Notifications are now handled by the Database Listener
@@ -198,19 +215,21 @@ async function startServer() {
   // Helper to trigger notification (Telegram/Email)
   const triggerNotification = async (payload: any) => {
     console.log('[Server] triggerNotification called with:', payload);
-    const { type, level, temperature, gas } = payload;
+    const { type, level, temperature, humidity, gas } = payload;
     const timestamp = payload.timestamp || Date.now();
     let message = "";
     
     if (type === 'alert' || type === 'status_update') {
       const emoji = type === 'status_update' ? '📊' : (level === 'Dangerous' ? '🚨' : '⚠️');
       const title = type === 'status_update' ? 'PERIODIC STATUS UPDATE' : `SENSOR ALERT: ${level}`;
-      const tempStr = typeof temperature === 'number' ? temperature.toFixed(2) : (Number(temperature)?.toFixed(2) ?? '0.00');
+      const tempStr = typeof temperature === 'number' ? temperature.toFixed(1) : (Number(temperature)?.toFixed(1) ?? '0.0');
+      const humStr = typeof humidity === 'number' ? humidity.toFixed(1) : (Number(humidity)?.toFixed(1) ?? '0.0');
       const gasStr = typeof gas === 'number' ? gas.toFixed(0) : (Number(gas)?.toFixed(0) ?? '0');
       
       message = `${emoji} <b>${title}</b>\n\n` +
                 `<b>Time:</b> ${new Date(timestamp).toLocaleString()}\n` +
                 `<b>Temp:</b> ${tempStr}°C\n` +
+                `<b>Humidity:</b> ${humStr}%\n` +
                 `<b>Gas:</b> ${gasStr} PPM\n\n` +
                 (type === 'alert' ? `<i>Please check the dashboard immediately.</i>` : `<i>System is currently ${level.toLowerCase()}.</i>`);
     } else if (type === 'status') {
@@ -343,13 +362,14 @@ async function startServer() {
         const settings = settingsSnap.exists() ? settingsSnap.val() : { isLogging: false, notificationFrequency: 'minute' };
 
         const tempNum = Number(data.temperature);
+        const humNum = Number(data.humidity);
         const gasNum = Number(data.gas);
 
-        if (isNaN(tempNum) || isNaN(gasNum)) return;
+        if (isNaN(tempNum) || isNaN(humNum) || isNaN(gasNum)) return;
 
         // 2. Perform Risk Analysis & Notifications
-        const riskLevel = getRiskLevel(tempNum, gasNum);
-        console.log(`[Server] [Listener] Risk Analysis: Temp=${tempNum}, Gas=${gasNum} => RiskLevel=${riskLevel}`);
+        const riskLevel = getRiskLevel(tempNum, humNum, gasNum);
+        console.log(`[Server] [Listener] Risk Analysis: Temp=${tempNum}, Hum=${humNum}, Gas=${gasNum} => RiskLevel=${riskLevel}`);
         
         const lastSentRef = ref(db, 'settings/notifications/lastSent');
         const lastSentSnap = await get(lastSentRef);
@@ -388,6 +408,7 @@ async function startServer() {
             type: notificationType,
             level: riskLevel,
             temperature: tempNum,
+            humidity: humNum,
             gas: gasNum,
             timestamp: now
           };

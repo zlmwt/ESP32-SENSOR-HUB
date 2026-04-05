@@ -1,5 +1,5 @@
 import React from 'react';
-import { Settings2, Thermometer, Wind } from 'lucide-react';
+import { Settings2, Thermometer, Wind, Droplets } from 'lucide-react';
 import { SimulationConfig } from '../services/esp32Simulator';
 
 interface SimulationSettingsProps {
@@ -18,12 +18,12 @@ export const SimulationSettings: React.FC<SimulationSettingsProps> = ({ config, 
         <h2 className="text-xl font-bold text-white">Test Mode Settings</h2>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
         {/* Temperature Range */}
         <div className="space-y-4">
           <div className="flex items-center gap-2 text-white/60 text-sm font-medium uppercase tracking-wider">
             <Thermometer size={16} />
-            <span>Temperature Range (°C)</span>
+            <span>Temperature (°C)</span>
           </div>
           <div className="flex items-center gap-4">
             <div className="flex-1">
@@ -47,11 +47,39 @@ export const SimulationSettings: React.FC<SimulationSettingsProps> = ({ config, 
           </div>
         </div>
 
+        {/* Humidity Range */}
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 text-white/60 text-sm font-medium uppercase tracking-wider">
+            <Droplets size={16} />
+            <span>Humidity (%)</span>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="flex-1">
+              <label className="block text-[10px] text-white/30 mb-1 uppercase">Min</label>
+              <input
+                type="number"
+                value={config.humidityMin}
+                onChange={(e) => onConfigChange({ humidityMin: Number(e.target.value) })}
+                className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500/50 transition-colors"
+              />
+            </div>
+            <div className="flex-1">
+              <label className="block text-[10px] text-white/30 mb-1 uppercase">Max</label>
+              <input
+                type="number"
+                value={config.humidityMax}
+                onChange={(e) => onConfigChange({ humidityMax: Number(e.target.value) })}
+                className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500/50 transition-colors"
+              />
+            </div>
+          </div>
+        </div>
+
         {/* Gas Range */}
         <div className="space-y-4">
           <div className="flex items-center gap-2 text-white/60 text-sm font-medium uppercase tracking-wider">
             <Wind size={16} />
-            <span>Gas Range (PPM)</span>
+            <span>Gas (PPM)</span>
           </div>
           <div className="flex items-center gap-4">
             <div className="flex-1">
