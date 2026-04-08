@@ -2,12 +2,15 @@ import React from 'react';
 import { AlertTriangle, CheckCircle, AlertCircle, ShieldAlert, Thermometer, Wind, Droplets } from 'lucide-react';
 import { SensorData } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
-
-interface RiskAnalysisProps {
-  currentData: SensorData | undefined;
-}
-
-type RiskLevel = 'Normal' | 'Low Risk' | 'Medium Risk' | 'Dangerous';
+import { 
+  getTemperatureRisk, 
+  getHumidityRisk, 
+  getSoilRisk, 
+  getSoilCategory, 
+  getOverallRiskLevel, 
+  RiskLevel,
+  parseSensorValue
+} from '../utils/sensorUtils';
 
 interface RiskInfo {
   level: RiskLevel;
@@ -18,56 +21,18 @@ interface RiskInfo {
   message: string;
 }
 
-export const RiskAnalysis: React.FC<RiskAnalysisProps> = ({ currentData }) => {
+export const RiskAnalysis: React.FC<{ currentData: SensorData | undefined }> = ({ currentData }) => {
   if (!currentData) return null;
 
-  const temperature = Number(currentData.temperature) || 0;
-  const humidity = Number(currentData.humidity) || 0;
-  const soil = Number(currentData.soil) || 0;
-
-  const getTemperatureRisk = (temp: number): RiskLevel => {
-    if (temp >= 18 && temp <= 30) return 'Normal';
-    if ((temp > 30 && temp <= 40) || (temp >= 10 && temp < 18)) return 'Low Risk';
-    if ((temp > 40 && temp <= 50) || (temp >= 0 && temp < 10)) return 'Medium Risk';
-    return 'Dangerous';
-  };
-
-  const getHumidityRisk = (hum: number): RiskLevel => {
-    if (hum >= 30 && hum <= 60) return 'Normal';
-    if ((hum > 60 && hum <= 80) || (hum >= 20 && hum < 30)) return 'Low Risk';
-    if ((hum > 80 && hum <= 90) || (hum >= 10 && hum < 20)) return 'Medium Risk';
-    return 'Dangerous';
-  };
-
-  const getSoilRisk = (s: number): RiskLevel => {
-    if (s >= 30 && s <= 70) return 'Normal';
-    if ((s > 70 && s <= 85) || (s >= 15 && s < 30)) return 'Low Risk';
-    if ((s > 85 && s <= 95) || (s >= 5 && s < 15)) return 'Medium Risk';
-    return 'Dangerous';
-  };
-
-  const getSoilCategory = (s: number): string => {
-    if (s < 15) return 'Very Dry';
-    if (s >= 15 && s < 30) return 'Dry';
-    if (s >= 30 && s <= 70) return 'Optimal';
-    if (s > 70 && s <= 85) return 'Moist';
-    return 'Very Wet';
-  };
+  const temperature = parseSensorValue(currentData.temperature);
+  const humidity = parseSensorValue(currentData.humidity);
+  const soil = parseSensorValue(currentData.soil);
 
   const soilCategory = getSoilCategory(soil);
   const tempRisk = getTemperatureRisk(temperature);
   const humRisk = getHumidityRisk(humidity);
   const soilRisk = getSoilRisk(soil);
-
-  const riskPriority: Record<RiskLevel, number> = {
-    'Normal': 0,
-    'Low Risk': 1,
-    'Medium Risk': 2,
-    'Dangerous': 3,
-  };
-
-  const overallRiskLevel: RiskLevel = [tempRisk, humRisk, soilRisk].reduce((prev, curr) => 
-    riskPriority[curr] > riskPriority[prev] ? curr : prev, 'Normal' as RiskLevel);
+  const overallRiskLevel = getOverallRiskLevel(temperature, humidity, soil);
 
   const riskConfig: Record<RiskLevel, RiskInfo> = {
     'Normal': {

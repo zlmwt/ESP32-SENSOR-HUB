@@ -29,6 +29,7 @@ import { Activity, Thermometer, Wind, RefreshCw, Cpu, Settings, LogOut, Send, Al
 import { ESP32ConnectionGuide } from './components/ESP32ConnectionGuide';
 import { SimulationSettings } from './components/SimulationSettings';
 import { DataRetentionSettings } from './components/DataRetentionSettings';
+import { getTimestamp, parseSensorValue } from './utils/sensorUtils';
 
 export function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
@@ -45,8 +46,8 @@ export function App() {
     tempMax: 30,
     humidityMin: 40,
     humidityMax: 80,
-    gasMin: 0,
-    gasMax: 500,
+    soilMin: 0,
+    soilMax: 100,
     noise: 0.5
   });
   const [simulator] = useState(() => new ESP32Simulator((data) => {
@@ -58,6 +59,22 @@ export function App() {
   const [isDeviceConnected, setIsDeviceConnected] = useState<boolean>(false);
   const [manualData, setManualData] = useState({ temperature: 25, humidity: 50, soil: 50 });
   const [isFirebaseReady, setIsFirebaseReady] = useState(false);
+  const [isInjecting, setIsInjecting] = useState(false);
+  const [notification, setNotification] = useState<{ show: boolean; message: string; type: 'success' | 'error' | 'warning' | 'info' }>({
+    show: false,
+    message: '',
+    type: 'info'
+  });
+
+  // Auto-hide notifications
+  useEffect(() => {
+    if (notification.show) {
+      const timer = setTimeout(() => {
+        setNotification(prev => ({ ...prev, show: false }));
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [notification.show]);
 
   // Initialize Firebase Auth
   useEffect(() => {
@@ -160,40 +177,10 @@ export function App() {
       });
     }
     // Initialize lastLoggingState with the first settings load
-    if (settings && lastLoggingState === null) {
-      setLastLoggingState(settings.isLogging);
-    } else if (settings) {
+    if (settings) {
       setLastLoggingState(settings.isLogging);
     }
   }, [settings?.isLogging]);
-
-  // Risk Analysis Logic
-  const getRiskLevel = (temp: number, humidity: number, ppm: number) => {
-    const getTempRisk = (t: number) => {
-      if (t >= 18 && t <= 30) return 0; // Normal
-      if ((t > 30 && t <= 40) || (t >= 10 && t < 18)) return 1; // Low
-      if ((t > 40 && t <= 50) || (t >= 0 && t < 10)) return 2; // Medium
-      return 3; // Dangerous
-    };
-    const getHumidityRisk = (h: number) => {
-      if (h >= 30 && h <= 60) return 0; // Normal
-      if ((h > 60 && h <= 80) || (h >= 20 && h < 30)) return 1; // Low
-      if ((h > 80 && h <= 90) || (h >= 10 && h < 20)) return 2; // Medium
-      return 3; // Dangerous
-    };
-    const getGasRisk = (p: number) => {
-      if (p < 400) return 0; // Clean Air (200-400)
-      if (p >= 400 && p < 1000) return 1; // Normal Indoor (300-800)
-      if (p >= 1000 && p < 5000) return 2; // Smoke Detected (1000-5000)
-      return 3; // Gas Leak (5000+)
-    };
-    const levels = ['Normal', 'Low Risk', 'Medium Risk', 'Dangerous'];
-    const maxRisk = Math.max(getTempRisk(temp), getHumidityRisk(humidity), getGasRisk(ppm));
-    return levels[maxRisk];
-  };
-
-  // Notification Monitor (Removed client-side alert logic as it's now handled server-side via API)
-  // This prevents duplicate notifications and ensures alerts work when tab is closed.
 
   // Realtime Database listeners
   useEffect(() => {
@@ -237,17 +224,6 @@ export function App() {
     return () => settingsUnsubscribe();
   }, [isAuthenticated, isFirebaseReady]);
 
-  // Helper to get numeric timestamp from various formats
-  const getTimestamp = (ts: any): number => {
-    if (!ts) return 0;
-    if (typeof ts === 'number') return ts;
-    if (typeof ts === 'string') return new Date(ts).getTime();
-    if (ts.toMillis) return ts.toMillis();
-    if (ts.toDate) return ts.toDate().getTime();
-    if (ts.seconds) return ts.seconds * 1000;
-    return 0;
-  };
-
   const [sessionStartTime, setSessionStartTime] = useState<number>(Date.now());
 
   // Statistics Calculation
@@ -264,9 +240,9 @@ export function App() {
     
     const calculate = (key: 'temperature' | 'humidity' | 'soil') => {
       // Current is ALWAYS the absolute latest value from the logs array
-      const current = Number(logs[0][key]) || 0;
+      const current = parseSensorValue(logs[0][key]);
       
-      const sessionValues = filteredLogs.map(l => Number(l[key])).filter(v => !isNaN(v));
+      const sessionValues = filteredLogs.map(l => parseSensorValue(l[key])).filter(v => !isNaN(v));
       
       // If no data in current session yet, fallback to current value for all stats
       if (sessionValues.length === 0) return { current, avg: current, max: current };
@@ -430,33 +406,79 @@ export function App() {
 
   // Mock Data Simulation (for testing without real ESP32)
   useEffect(() => {
-    const interval = settings?.interval;
+    const interval = settings?.interval || 5000;
     
     if (isSimulating && isAuthenticated && interval && isTabActive) {
       console.log(`[App] Starting simulator with interval: ${interval}ms`);
       simulator.start(interval);
+      setNotification({
+        show: true,
+        message: "Simulator started",
+        type: 'info'
+      });
     } else {
       simulator.stop();
+      if (isSimulating && !isTabActive) {
+        console.log("[App] Simulator paused (inactive tab)");
+      }
     }
     return () => simulator.stop();
   }, [isSimulating, settings?.interval, isAuthenticated, isTabActive]);
 
-  const handleManualInput = async () => {
-    if (!isAuthenticated) return;
+  const handleManualInput = async (dataOverride?: any) => {
+    if (!isAuthenticated) {
+      console.warn("[App] Manual input ignored: Not authenticated");
+      setNotification({
+        show: true,
+        message: "Please wait for authentication to complete.",
+        type: 'warning'
+      });
+      return;
+    }
+    
+    // If dataOverride is an event object (from onClick), ignore it and use manualData
+    const isEvent = dataOverride && (dataOverride.nativeEvent || dataOverride.target);
+    const dataToSend = (dataOverride && !isEvent) ? dataOverride : manualData;
+    
+    console.log("[App] Attempting manual data injection:", dataToSend);
+    setIsInjecting(true);
+    
     try {
       const response = await fetch('/api/esp32/log', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(manualData)
+        body: JSON.stringify({ ...dataToSend, manual: true })
       });
       
+      const result = await response.json();
+      console.log("[App] Manual data injection response:", result);
+      
       if (!response.ok) {
-        throw new Error(`API error: ${response.status} ${await response.text()}`);
+        throw new Error(`API error: ${response.status} ${JSON.stringify(result)}`);
       }
       
-      console.log("[App] Manual data logged via API:", manualData);
-    } catch (err) {
+      if (result.ignored) {
+        setNotification({
+          show: true,
+          message: result.message || "Data ignored by server (too frequent)",
+          type: 'warning'
+        });
+      } else {
+        setNotification({
+          show: true,
+          message: "Data injected successfully!",
+          type: 'success'
+        });
+      }
+    } catch (err: any) {
       console.error("Error logging manual data:", err);
+      setNotification({
+        show: true,
+        message: `Failed to inject data: ${err.message}`,
+        type: 'error'
+      });
+    } finally {
+      setIsInjecting(false);
     }
   };
 
@@ -490,6 +512,32 @@ export function App() {
       level: 'Test Notification',
       timestamp: Date.now()
     });
+  };
+
+  const handleClearLogs = async () => {
+    if (!isAuthenticated || !isFirebaseReady) return;
+    if (!window.confirm("Are you sure you want to clear all sensor logs? This action cannot be undone.")) return;
+    
+    setIsLoading(true);
+    try {
+      const logsRef = ref(db, 'sensor_logs');
+      await remove(logsRef);
+      setLogs([]);
+      setNotification({
+        show: true,
+        message: "All logs cleared successfully",
+        type: 'success'
+      });
+    } catch (err: any) {
+      console.error("Error clearing logs:", err);
+      setNotification({
+        show: true,
+        message: `Failed to clear logs: ${err.message}`,
+        type: 'error'
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   if (isLoading) {
@@ -540,6 +588,29 @@ export function App() {
             variants={itemVariants}
             className="flex items-center gap-6"
           >
+            {/* Tab Status Indicator */}
+            <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 bg-white/5 rounded-full border border-white/10">
+              <div className={`w-1.5 h-1.5 rounded-full ${isTabActive ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-amber-500'}`} />
+              <span className="text-[9px] font-black text-white/40 uppercase tracking-widest">
+                {isTabActive ? 'Primary Tab' : 'Secondary Tab'}
+              </span>
+              {!isTabActive && (
+                <button 
+                  onClick={() => {
+                    const tabId = Math.random().toString(36).substring(7);
+                    localStorage.setItem('esp32_active_tab_data', JSON.stringify({
+                      tabId,
+                      lastSeen: Date.now()
+                    }));
+                    window.location.reload();
+                  }}
+                  className="ml-2 text-[9px] font-black text-amber-400 hover:text-amber-300 uppercase underline decoration-amber-400/30 underline-offset-2"
+                >
+                  Takeover
+                </button>
+              )}
+            </div>
+
             <button
               onClick={() => {
                 if (!settings) return; // Prevent crash if settings not loaded
@@ -585,7 +656,7 @@ export function App() {
         </header>
 
         {/* Tab Lock Warning */}
-        {!isTabActive && settings?.isLogging && (
+        {!isTabActive && (settings?.isLogging || isSimulating) && (
           <motion.div 
             variants={itemVariants}
             className="bg-amber-500/10 border border-amber-500/20 p-6 rounded-3xl mb-8 flex flex-col md:flex-row items-center justify-between gap-6 glow-amber"
@@ -625,7 +696,7 @@ export function App() {
           />
         </motion.div>
 
-        {/* 2. Sensor Cards (Temperature, Humidity, Gas) */}
+        {/* 2. Sensor Cards (Temperature, Humidity, Soil) */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-12">
           {/* Temperature Card */}
           <motion.div 
@@ -840,55 +911,64 @@ export function App() {
         >
           <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-emerald-500 via-amber-500 to-red-500" />
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-8 mb-10">
-            <div>
-              <h3 className="text-2xl font-black text-white flex items-center gap-3 uppercase tracking-tighter italic">
-                <div className="p-2 bg-emerald-500/10 rounded-lg border border-emerald-500/20">
-                  <Send size={24} className="text-emerald-500" />
-                </div>
-                Manual Data Injection
-              </h3>
-              <p className="text-white/40 text-xs font-mono uppercase tracking-widest mt-2">
-                Send custom data immediately to test system alerts
-              </p>
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-2xl font-black text-white flex items-center gap-3 uppercase tracking-tighter italic">
+                  <div className="p-2 bg-emerald-500/10 rounded-lg border border-emerald-500/20">
+                    <Send size={24} className="text-emerald-500" />
+                  </div>
+                  Manual Data Injection
+                </h3>
+                <p className="text-white/40 text-xs font-mono uppercase tracking-widest mt-2">
+                  Send custom data immediately to test system alerts
+                </p>
+              </div>
+              <button
+                onClick={handleClearLogs}
+                className="px-6 py-3 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center gap-2 self-start md:self-center"
+              >
+                <RefreshCw size={14} />
+                Clear All Logs
+              </button>
             </div>
             <div className="flex flex-wrap gap-3">
               <button
                 onClick={() => {
-                  setManualData({ temperature: 25, humidity: 45, soil: 50 });
-                  setTimeout(handleManualInput, 100);
+                  const data = { temperature: 25, humidity: 45, soil: 50 };
+                  setManualData(data);
+                  handleManualInput(data);
                 }}
-                disabled={!settings?.isLogging}
-                className="px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-emerald-400 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all disabled:opacity-20"
+                className="px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-emerald-400 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all"
               >
                 Optimal Soil
               </button>
               <button
                 onClick={() => {
-                  setManualData({ temperature: 26, humidity: 55, soil: 25 });
-                  setTimeout(handleManualInput, 100);
+                  const data = { temperature: 26, humidity: 55, soil: 25 };
+                  setManualData(data);
+                  handleManualInput(data);
                 }}
-                disabled={!settings?.isLogging}
-                className="px-4 py-2 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 text-blue-400 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all disabled:opacity-20"
+                className="px-4 py-2 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 text-blue-400 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all"
               >
                 Dry Soil
               </button>
               <button
                 onClick={() => {
-                  setManualData({ temperature: 35, humidity: 75, soil: 80 });
-                  setTimeout(handleManualInput, 100);
+                  const data = { temperature: 35, humidity: 75, soil: 80 };
+                  setManualData(data);
+                  handleManualInput(data);
                 }}
-                disabled={!settings?.isLogging}
-                className="px-4 py-2 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all disabled:opacity-20"
+                className="px-4 py-2 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all"
               >
                 Moist Soil
               </button>
               <button
                 onClick={() => {
-                  setManualData({ temperature: 28, humidity: 85, soil: 10 });
-                  setTimeout(handleManualInput, 100);
+                  const data = { temperature: 28, humidity: 85, soil: 10 };
+                  setManualData(data);
+                  handleManualInput(data);
                 }}
-                disabled={!settings?.isLogging}
-                className="px-4 py-2 bg-red-600/20 hover:bg-red-600/30 border border-red-600/30 text-red-500 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all disabled:opacity-20 glow-red"
+                className="px-4 py-2 bg-red-600/20 hover:bg-red-600/30 border border-red-600/30 text-red-500 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all glow-red"
               >
                 Critical Dry
               </button>
@@ -924,17 +1004,21 @@ export function App() {
               />
             </div>
             <button
-              onClick={handleManualInput}
-              disabled={!settings?.isLogging}
+              onClick={() => handleManualInput()}
+              disabled={isInjecting}
               className="bg-emerald-500 hover:bg-emerald-400 disabled:bg-white/5 disabled:text-white/20 text-black font-black py-4 px-8 rounded-2xl transition-all flex items-center justify-center gap-3 uppercase tracking-widest text-sm glow-emerald"
             >
-              <Send size={20} />
-              Send Custom
+              {isInjecting ? (
+                <RefreshCw size={20} className="animate-spin" />
+              ) : (
+                <Send size={20} />
+              )}
+              {isInjecting ? "Sending..." : "Send Custom"}
             </button>
           </div>
           {!settings?.isLogging && (
-            <p className="text-[10px] text-red-500 mt-6 font-black uppercase tracking-widest animate-pulse">
-              Recording is off: Data cannot be sent
+            <p className="text-[10px] text-amber-500 mt-6 font-black uppercase tracking-widest">
+              Recording is off: Manual data will still be logged, but automatic sensor data will be ignored.
             </p>
           )}
         </motion.div>
@@ -1001,6 +1085,45 @@ export function App() {
           </p>
         </footer>
       </motion.div>
+
+      {/* Global Notifications */}
+      <AnimatePresence>
+        {notification.show && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.9 }}
+            className={`fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] px-6 py-4 rounded-2xl border shadow-2xl flex items-center gap-4 min-w-[320px] backdrop-blur-xl ${
+              notification.type === 'success' ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400' :
+              notification.type === 'error' ? 'bg-red-500/20 border-red-500/50 text-red-400' :
+              notification.type === 'warning' ? 'bg-amber-500/20 border-amber-500/50 text-amber-400' :
+              'bg-blue-500/20 border-blue-500/50 text-blue-400'
+            }`}
+          >
+            <div className={`p-2 rounded-xl ${
+              notification.type === 'success' ? 'bg-emerald-500/20' :
+              notification.type === 'error' ? 'bg-red-500/20' :
+              notification.type === 'warning' ? 'bg-amber-500/20' :
+              'bg-blue-500/20'
+            }`}>
+              {notification.type === 'success' && <RefreshCw size={20} className="animate-spin-slow" />}
+              {notification.type === 'error' && <AlertTriangle size={20} />}
+              {notification.type === 'warning' && <AlertTriangle size={20} />}
+              {notification.type === 'info' && <RefreshCw size={20} />}
+            </div>
+            <div className="flex-1">
+              <p className="text-xs font-black uppercase tracking-widest">{notification.type}</p>
+              <p className="text-sm font-medium text-white/90">{notification.message}</p>
+            </div>
+            <button 
+              onClick={() => setNotification(prev => ({ ...prev, show: false }))}
+              className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+            >
+              <LogOut size={16} className="rotate-90" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -11,6 +11,7 @@ import {
 } from 'recharts';
 import { format } from 'date-fns';
 import { SensorData } from '../types';
+import { getTimestamp, parseSensorValue } from '../utils/sensorUtils';
 
 interface SensorChartProps {
   data: SensorData[];
@@ -54,21 +55,13 @@ export const SensorChart: React.FC<SensorChartProps> = ({ data, dataKey, color, 
 
   useEffect(() => {
     const formatted = data.map(d => {
-      let timeStr = '...';
-      if (d.timestamp) {
-        if (typeof d.timestamp === 'string') {
-          timeStr = d.timestamp.split(' ')[1] || d.timestamp;
-        } else if (typeof d.timestamp === 'number') {
-          timeStr = format(new Date(d.timestamp), 'HH:mm:ss');
-        } else if (d.timestamp.toDate) {
-          timeStr = format(d.timestamp.toDate(), 'HH:mm:ss');
-        }
-      }
+      const ts = getTimestamp(d.timestamp);
+      const timeStr = ts ? format(new Date(ts), 'HH:mm:ss') : '...';
       
       return {
         ...d,
         time: timeStr,
-        value: d[dataKey]
+        value: parseSensorValue(d[dataKey])
       };
     }).reverse();
     setChartData(formatted);

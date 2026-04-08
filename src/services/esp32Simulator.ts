@@ -70,18 +70,26 @@ export class ESP32Simulator {
           body: JSON.stringify({
             temperature: data.temperature,
             humidity: data.humidity,
-            soil: data.soil
+            soil: data.soil,
+            manual: true // Simulation bypasses interval to ensure responsiveness in test mode
           })
         });
 
+        const result = await response.json();
+
         if (!response.ok) {
-          throw new Error(`API error: ${response.status} ${await response.text()}`);
+          throw new Error(`API error: ${response.status} ${JSON.stringify(result)}`);
         }
         
+        if (result.ignored) {
+          console.warn(`[ESP32 Simulator] Data was ignored by server:`, result.message);
+          return;
+        }
+
         if (this.onDataSent) {
           this.onDataSent(data);
         }
-        console.log(`[ESP32 Simulator] Data sent via API:`, data);
+        console.log(`[ESP32 Simulator] Data logged successfully:`, data);
       } catch (error) {
         console.error(`[ESP32 Simulator] Failed to send data:`, error);
       }

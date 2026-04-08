@@ -3,7 +3,15 @@
     ".read": "auth != null",
     ".write": "auth != null",
     "sensor_logs": {
-      ".indexOn": ["timestamp"]
+      ".indexOn": ["timestamp"],
+      "$logId": {
+        ".validate": "newData.hasChildren(['temperature', 'humidity', 'soil', 'timestamp']) && newData.child('temperature').isNumber() && newData.child('humidity').isNumber() && newData.child('soil').isNumber() && newData.child('timestamp').isString()"
+      }
+    },
+    "settings": {
+      "logging": {
+        ".validate": "newData.hasChildren(['isLogging', 'interval']) && newData.child('isLogging').isBoolean() && newData.child('interval').isNumber()"
+      }
     }
   }
 }

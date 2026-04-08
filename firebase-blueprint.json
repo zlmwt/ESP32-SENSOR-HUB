@@ -2,24 +2,31 @@
   "entities": {
     "SensorData": {
       "title": "Sensor Data",
-      "description": "Logged data from DS18B20 and MQ2 sensors",
+      "description": "Logged data from DHT22 and HW-390 sensors",
       "type": "object",
       "properties": {
         "temperature": {
           "type": "number",
-          "description": "Temperature in Celsius from DS18B20"
+          "description": "Temperature in Celsius from DHT22"
         },
-        "gas": {
+        "humidity": {
           "type": "number",
-          "description": "Gas level from MQ2 sensor"
+          "description": "Humidity percentage from DHT22"
+        },
+        "soil": {
+          "type": "number",
+          "description": "Soil moisture percentage from HW-390"
         },
         "timestamp": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Time when data was logged"
+          "type": "integer",
+          "description": "Unix timestamp when data was logged"
+        },
+        "manual": {
+          "type": "boolean",
+          "description": "Whether the data was manually injected"
         }
       },
-      "required": ["temperature", "gas", "timestamp"]
+      "required": ["temperature", "humidity", "soil", "timestamp"]
     },
     "LoggingSettings": {
       "title": "Logging Settings",
@@ -34,23 +41,21 @@
           "type": "integer",
           "description": "Logging interval in milliseconds"
         },
-        "lastUpdated": {
+        "notificationFrequency": {
           "type": "string",
-          "format": "date-time",
+          "enum": ["minute", "hour", "day"],
+          "description": "How often to send risk notifications"
+        },
+        "retentionDays": {
+          "type": "integer",
+          "description": "Number of days to keep logs"
+        },
+        "lastUpdated": {
+          "type": "integer",
           "description": "Last time settings were changed"
         }
       },
-      "required": ["isLogging", "interval"]
-    }
-  },
-  "firestore": {
-    "settings/logging": {
-      "schema": "LoggingSettings",
-      "description": "Global logging configuration"
-    },
-    "sensor_logs": {
-      "schema": "SensorData",
-      "description": "Collection of historical sensor data"
+      "required": ["isLogging", "interval", "notificationFrequency", "retentionDays"]
     }
   }
 }

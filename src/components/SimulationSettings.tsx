@@ -75,19 +75,19 @@ export const SimulationSettings: React.FC<SimulationSettingsProps> = ({ config, 
           </div>
         </div>
 
-        {/* Gas Range */}
+        {/* Soil Moisture Range */}
         <div className="space-y-4">
           <div className="flex items-center gap-2 text-white/60 text-sm font-medium uppercase tracking-wider">
-            <Wind size={16} />
-            <span>Gas (PPM)</span>
+            <Droplets size={16} />
+            <span>Soil Moisture (%)</span>
           </div>
           <div className="flex items-center gap-4">
             <div className="flex-1">
               <label className="block text-[10px] text-white/30 mb-1 uppercase">Min</label>
               <input
                 type="number"
-                value={config.gasMin}
-                onChange={(e) => onConfigChange({ gasMin: Number(e.target.value) })}
+                value={config.soilMin}
+                onChange={(e) => onConfigChange({ soilMin: Number(e.target.value) })}
                 className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500/50 transition-colors"
               />
             </div>
@@ -95,8 +95,8 @@ export const SimulationSettings: React.FC<SimulationSettingsProps> = ({ config, 
               <label className="block text-[10px] text-white/30 mb-1 uppercase">Max</label>
               <input
                 type="number"
-                value={config.gasMax}
-                onChange={(e) => onConfigChange({ gasMax: Number(e.target.value) })}
+                value={config.soilMax}
+                onChange={(e) => onConfigChange({ soilMax: Number(e.target.value) })}
                 className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500/50 transition-colors"
               />
             </div>

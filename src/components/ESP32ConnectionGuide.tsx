@@ -186,7 +186,7 @@ void loop() {
             </div>
             <p className="text-xs text-white/60 leading-relaxed">
               The code above uses a dedicated endpoint <code>/api/esp32/log</code>. 
-              This endpoint is designed to receive raw JSON from your ESP32 and securely store it in Firestore. 
+              This endpoint is designed to receive raw JSON from your ESP32 and securely store it in Realtime Database. 
               <strong>New:</strong> Alerts and notifications are now processed on the server, meaning you will receive Telegram/Email alerts even if this browser tab is closed!
             </p>
           </div>

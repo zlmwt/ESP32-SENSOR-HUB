@@ -6,6 +6,8 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously } from 'firebase/auth';
 import { getDatabase, ref, push, serverTimestamp, get, set, query as dbQuery, orderByChild, limitToLast, onChildAdded } from 'firebase/database';
 import fs from 'fs';
+import { format } from 'date-fns';
+import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 // @ts-ignore - createViteServer will be imported dynamically for dev only
 let createViteServer: any;
 
@@ -32,7 +34,9 @@ if (Object.keys(fbConfig).length === 0) {
   try {
     if (fs.existsSync(configPath)) {
       fbConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-      console.log("[Server] Firebase config loaded from file.");
+      console.log("[Server] Firebase config loaded from file. Project ID:", fbConfig.projectId);
+    } else {
+      console.error("[Server] firebase-applet-config.json NOT FOUND at:", configPath);
     }
   } catch (err) {
     console.error("[Server] Failed to load firebase-applet-config.json:", err);
@@ -61,6 +65,42 @@ async function ensureAuthenticated() {
   }
 }
 
+// Helper to parse sensor values that might be formatted as strings (e.g., "34%")
+const parseValue = (val: any): number => {
+  if (val === undefined || val === null) return 0;
+  if (typeof val === 'number') return val;
+  if (typeof val === 'string') {
+    const cleaned = val.replace(/[^\d.-]/g, '');
+    return parseFloat(cleaned) || 0;
+  }
+  return 0;
+};
+
+// Helper for Risk Analysis (Server-side)
+const getRiskLevel = (temp: number, humidity: number, soil: number) => {
+  const getTempRisk = (t: number) => {
+    if (t >= 18 && t <= 30) return 0;
+    if ((t > 30 && t <= 40) || (t >= 10 && t < 18)) return 1;
+    if ((t > 40 && t <= 50) || (t >= 0 && t < 10)) return 2;
+    return 3;
+  };
+  const getHumidityRisk = (h: number) => {
+    if (h >= 30 && h <= 60) return 0;
+    if ((h > 60 && h <= 80) || (h >= 20 && h < 30)) return 1;
+    if ((h > 80 && h <= 90) || (h >= 10 && h < 20)) return 2;
+    return 3;
+  };
+  const getSoilRisk = (s: number) => {
+    if (s >= 30 && s <= 70) return 0;
+    if ((s > 70 && s <= 85) || (s >= 15 && s < 30)) return 1;
+    if ((s > 85 && s <= 95) || (s >= 5 && s < 15)) return 2;
+    return 3;
+  };
+  const levels = ['Normal', 'Low Risk', 'Medium Risk', 'Dangerous'];
+  const maxRisk = Math.max(getTempRisk(temp), getHumidityRisk(humidity), getSoilRisk(soil));
+  return levels[maxRisk];
+};
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -72,113 +112,95 @@ async function startServer() {
     res.json({ status: "ok", time: new Date().toISOString() });
   });
 
-  // Helper for Risk Analysis (Server-side)
-  const getRiskLevel = (temp: number, humidity: number, soil: number) => {
-    const getTempRisk = (t: number) => {
-      if (t >= 18 && t <= 30) return 0; // Normal
-      if ((t > 30 && t <= 40) || (t >= 10 && t < 18)) return 1; // Low
-      if ((t > 40 && t <= 50) || (t >= 0 && t < 10)) return 2; // Medium
-      return 3; // Dangerous
-    };
-    const getHumidityRisk = (h: number) => {
-      if (h >= 30 && h <= 60) return 0; // Normal
-      if ((h > 60 && h <= 80) || (h >= 20 && h < 30)) return 1; // Low
-      if ((h > 80 && h <= 90) || (h >= 10 && h < 20)) return 2; // Medium
-      return 3; // Dangerous
-    };
-    const getSoilRisk = (s: number) => {
-      if (s >= 30 && s <= 70) return 0; // Normal
-      if ((s > 70 && s <= 85) || (s >= 15 && s < 30)) return 1; // Low
-      if ((s > 85 && s <= 95) || (s >= 5 && s < 15)) return 2; // Medium
-      return 3; // Dangerous (Too dry or too wet)
-    };
-    const levels = ['Normal', 'Low Risk', 'Medium Risk', 'Dangerous'];
-    const maxRisk = Math.max(getTempRisk(temp), getHumidityRisk(humidity), getSoilRisk(soil));
-    return levels[maxRisk];
-  };
-
-  // Helper to format date as YYYY-MM-DD HH:MM:SS
-  const formatTimestamp = (date: Date) => {
-    const pad = (n: number) => n.toString().padStart(2, '0');
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-  };
-
   // ESP32 Data Logging API
   app.post("/api/esp32/log", async (req, res) => {
-    const { temperature, humidity, soil } = req.body;
-    
-    // Ensure authenticated before database operations
-    const isAuth = await ensureAuthenticated();
-    if (!isAuth) {
-      return res.status(500).json({ 
-        error: "Server authentication failed. Please ensure Anonymous Auth is enabled in Firebase Console.",
-        code: "auth_failed"
-      });
-    }
-
-    // Validate presence
-    if (temperature === undefined || humidity === undefined || soil === undefined) {
-      console.warn(`[Server] Missing fields in /api/esp32/log:`, { temperature, humidity, soil });
-      const missing = [];
-      if (temperature === undefined) missing.push("temperature");
-      if (humidity === undefined) missing.push("humidity");
-      if (soil === undefined) missing.push("soil");
-      return res.status(400).json({ 
-        error: `Missing required fields: ${missing.join(", ")}`,
-        received: req.body 
-      });
-    }
-
-    // Validate types
-    const tempNum = Number(temperature);
-    const humNum = Number(humidity);
-    const soilNum = Number(soil);
-
-    if (isNaN(tempNum) || isNaN(humNum) || isNaN(soilNum)) {
-      console.warn(`[Server] Invalid data format in /api/esp32/log:`, { temperature, humidity, soil });
-      const invalid = [];
-      if (isNaN(tempNum)) invalid.push("temperature");
-      if (isNaN(humNum)) invalid.push("humidity");
-      if (isNaN(soilNum)) invalid.push("soil");
-      return res.status(400).json({ 
-        error: `Invalid data format for: ${invalid.join(", ")}. Values must be numeric.`,
-        received: { temperature, humidity, soil }
-      });
-    }
-
     try {
+      console.log(`[Server] Incoming log request body:`, req.body);
+      const { temperature, humidity, soil } = req.body;
+      
+      // Ensure authenticated before database operations
+      const isAuth = await ensureAuthenticated();
+      if (!isAuth) {
+        console.error("[Server] Authentication failed during log request");
+        return res.status(500).json({ 
+          error: "Server authentication failed. Please ensure Anonymous Auth is enabled in Firebase Console.",
+          code: "auth_failed"
+        });
+      }
+
+      // Validate presence
+      if (temperature === undefined || humidity === undefined || soil === undefined) {
+        console.warn(`[Server] Missing fields in /api/esp32/log:`, { temperature, humidity, soil });
+        const missing = [];
+        if (temperature === undefined) missing.push("temperature");
+        if (humidity === undefined) missing.push("humidity");
+        if (soil === undefined) missing.push("soil");
+        return res.status(400).json({ 
+          error: `Missing required fields: ${missing.join(", ")}`,
+          received: req.body 
+        });
+      }
+
+      // Validate types
+      const tempNum = Number(temperature);
+      const humNum = Number(humidity);
+      const soilNum = Number(soil);
+
+      if (isNaN(tempNum) || isNaN(humNum) || isNaN(soilNum)) {
+        console.warn(`[Server] Invalid data format in /api/esp32/log:`, { temperature, humidity, soil });
+        const invalid = [];
+        if (isNaN(tempNum)) invalid.push("temperature");
+        if (isNaN(humNum)) invalid.push("humidity");
+        if (isNaN(soilNum)) invalid.push("soil");
+        return res.status(400).json({ 
+          error: `Invalid data format for: ${invalid.join(", ")}. Values must be numeric.`,
+          received: { temperature, humidity, soil }
+        });
+      }
+
       // 1. Load settings to check if logging is enabled and the interval
       const settingsRef = ref(db, 'settings/logging');
       const settingsSnap = await get(settingsRef);
       const settings = settingsSnap.exists() ? settingsSnap.val() : { isLogging: false, interval: 5000, notificationFrequency: 'minute' };
 
-      // 2. Log the data ONLY if logging is enabled
+      // 2. Log the data ONLY if logging is enabled or it's a manual injection
       let newLogRef = null;
-      if (settings.isLogging) {
+      const isManual = req.body.manual === true;
+
+      if (settings.isLogging || isManual) {
         const now = Date.now();
-        const lastLogRef = ref(db, 'settings/logging/lastLogTimestamp');
+        const lastLogRef = ref(db, 'status/lastLogTimestamp');
         const lastLogSnap = await get(lastLogRef);
         const lastLogTime = lastLogSnap.exists() ? Number(lastLogSnap.val()) : 0;
         
         const interval = settings.interval || 5000;
         
-        // Enforce the interval on the server side
-        if (now - lastLogTime >= interval - 500) { // 500ms grace period for network jitter
+        console.log(`[Server] Processing log request. isManual: ${isManual}, isLogging: ${settings.isLogging}, timeSinceLast: ${now - lastLogTime}ms, interval: ${interval}ms`);
+
+        // Enforce the interval on the server side, but bypass for manual injection
+        if (isManual || now - lastLogTime >= interval - 800) { // Increased grace period to 800ms
+          console.log(`[Server] Attempting to push to sensor_logs...`);
           const logsRef = ref(db, 'sensor_logs');
           
-          newLogRef = await push(logsRef, {
-            temperature: tempNum,
-            humidity: humNum,
-            soil: soilNum,
-            timestamp: Date.now()
-          });
+          const timeZone = 'Asia/Jakarta';
+          const zonedDate = toZonedTime(new Date(), timeZone);
+          
+          const logData = {
+            temperature: Math.round(tempNum * 10) / 10,
+            humidity: Math.round(humNum * 10) / 10,
+            soil: Math.round(soilNum),
+            timestamp: format(zonedDate, 'yyyy-MM-dd HH:mm:ss')
+          };
+          
+          newLogRef = await push(logsRef, logData);
+          console.log(`[Server] Push successful, key: ${newLogRef.key}`);
           
           // Update last log timestamp
           await set(lastLogRef, now);
           
-          console.log(`[Server] ESP32 Data logged via API (Interval respected):`, { temperature: tempNum, humidity: humNum, soil: soilNum, id: newLogRef.key });
+          console.log(`[Server] ESP32 Data logged successfully (${isManual ? 'Manual' : 'Interval respected'}):`, { temperature: tempNum, humidity: humNum, soil: soilNum, id: newLogRef.key });
         } else {
-          console.log(`[Server] ESP32 Data ignored (Too frequent):`, { 
+          console.warn(`[Server] ESP32 Data ignored (Too frequent):`, { 
             temperature: tempNum, 
             humidity: humNum,
             soil: soilNum, 
@@ -188,15 +210,14 @@ async function startServer() {
           return res.json({ 
             success: true, 
             ignored: true,
-            message: "Data ignored to respect logging interval" 
+            message: `Data ignored to respect logging interval (${interval}ms). Wait ${interval - (now - lastLogTime)}ms.`,
+            timeSinceLast: now - lastLogTime,
+            interval: interval
           });
         }
       } else {
-        console.log(`[Server] ESP32 Data received via API but logging is OFF:`, { temperature: tempNum, humidity: humNum, soil: soilNum });
+        console.warn(`[Server] ESP32 Data received but logging is OFF and not manual:`, { temperature: tempNum, humidity: humNum, soil: soilNum });
       }
-
-      // Note: Risk Analysis and Notifications are now handled by the Database Listener
-      // to support real ESP32 devices writing directly to the database.
 
       res.json({ 
         success: true, 
@@ -204,12 +225,11 @@ async function startServer() {
         message: settings.isLogging ? "Data logged successfully" : "Data received (logging off)" 
       });
     } catch (error: any) {
-      console.error("[Server] Failed to log ESP32 data:", error);
-      
+      console.error("[Server] Error processing log request:", error.message || error);
       res.status(500).json({ 
         error: "Failed to log data to the database.",
         code: error.code || "unknown_error",
-        details: process.env.NODE_ENV === 'development' ? error.message : undefined
+        details: error.message 
       });
     }
   });
@@ -350,7 +370,10 @@ async function startServer() {
 
       // Skip logs that were already in the DB before the server started
       // or logs that don't have a valid timestamp
-      const logTime = data.timestamp || 0;
+      const logTime = typeof data.timestamp === 'string' 
+        ? fromZonedTime(data.timestamp, 'Asia/Jakarta').getTime() 
+        : (data.timestamp || 0);
+      
       if (logTime < startTime - 10000) { // 10s buffer
         return;
       }
@@ -363,9 +386,9 @@ async function startServer() {
         const settingsSnap = await get(settingsRef);
         const settings = settingsSnap.exists() ? settingsSnap.val() : { isLogging: false, notificationFrequency: 'minute' };
 
-        const tempNum = Number(data.temperature);
-        const humNum = Number(data.humidity);
-        const soilNum = Number(data.soil);
+        const tempNum = parseValue(data.temperature);
+        const humNum = parseValue(data.humidity);
+        const soilNum = parseValue(data.soil);
 
         if (isNaN(tempNum) || isNaN(humNum) || isNaN(soilNum)) return;
 

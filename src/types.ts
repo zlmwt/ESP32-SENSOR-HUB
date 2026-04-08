@@ -3,7 +3,7 @@ export interface SensorData {
   temperature: number;
   humidity: number;
   soil: number;
-  timestamp: any; // Firestore Timestamp or String
+  timestamp: any; // Unix Timestamp or String
 }
 
 export type NotificationFrequency = 'minute' | 'hour' | 'day';
@@ -13,5 +13,5 @@ export interface LoggingSettings {
   interval: number;
   notificationFrequency: NotificationFrequency;
   retentionDays: number;
-  lastUpdated: any; // Firestore Timestamp
+  lastUpdated: any; // Unix Timestamp
 }
