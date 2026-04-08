@@ -7,8 +7,7 @@ export const ESP32ConnectionGuide: React.FC = () => {
   const esp32Code = `
 #include <WiFi.h>
 #include <HTTPClient.h>
-#include <OneWire.h>
-#include <DallasTemperature.h>
+#include <DHT.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 
@@ -17,13 +16,13 @@ const char* ssid = "YOUR_WIFI_SSID";
 const char* password = "YOUR_WIFI_PASSWORD";
 const char* serverUrl = "https://esp-32-sensor-hub.vercel.app/api/esp32/log";
 
-// DS18B20 Setup
-#define ONE_WIRE_BUS 4
-OneWire oneWire(ONE_WIRE_BUS);
-DallasTemperature sensors(&oneWire);
+// DHT22 Setup
+#define DHTPIN 4
+#define DHTTYPE DHT22
+DHT dht(DHTPIN, DHTTYPE);
 
-// MQ2 Setup
-#define MQ2PIN 34
+// HW-390 Soil Moisture Setup
+#define SOIL_PIN 34
 
 // OLED Setup
 #define SCREEN_WIDTH 128
@@ -35,7 +34,7 @@ void setup() {
   Serial.begin(115200);
   
   // Initialize Sensors & Display
-  sensors.begin();
+  dht.begin();
   if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
     Serial.println(F("SSD1306 allocation failed"));
   }
@@ -47,13 +46,17 @@ void setup() {
     delay(500);
     Serial.print(".");
   }
-  Serial.println("\\nWiFi connected");
+  Serial.println("\nWiFi connected");
 }
 
 void loop() {
-  sensors.requestTemperatures();
-  float temp = sensors.getTempCByIndex(0);
-  int gasValue = analogRead(MQ2PIN);
+  float temp = dht.readTemperature();
+  float hum = dht.readHumidity();
+  int soilRaw = analogRead(SOIL_PIN);
+  // Map raw value (0-4095) to percentage (0-100)
+  // Note: Capacitive sensors usually output lower voltage when wet
+  int soilPercent = map(soilRaw, 4095, 1500, 0, 100);
+  soilPercent = constrain(soilPercent, 0, 100);
 
   // Update OLED
   display.clearDisplay();
@@ -61,18 +64,20 @@ void loop() {
   display.setTextSize(1);
   display.println("ESP32 Sensor Hub");
   display.println("----------------");
-  display.setTextSize(2);
-  display.print("T: "); display.print(temp); display.println(" C");
-  display.print("G: "); display.print(gasValue); display.println(" PPM");
+  display.setTextSize(1);
+  display.print("Temp: "); display.print(temp); display.println(" C");
+  display.print("Hum:  "); display.print(hum); display.println(" %");
+  display.print("Soil: "); display.print(soilPercent); display.println(" %");
   display.display();
 
-  if (WiFi.status() == WL_CONNECTED) {
+  if (WiFi.status() == WL_CONNECTED && !isnan(temp) && !isnan(hum)) {
     HTTPClient http;
     http.begin(serverUrl);
     http.addHeader("Content-Type", "application/json");
 
-    String jsonPayload = "{\\"temperature\\":" + String(temp) + 
-                         ",\\"gas\\":" + String(gasValue) + "}";
+    String jsonPayload = "{\"temperature\":" + String(temp) + 
+                         ",\"humidity\":" + String(hum) +
+                         ",\"soil\":" + String(soilPercent) + "}";
 
     int httpResponseCode = http.POST(jsonPayload);
     http.end();
@@ -94,7 +99,7 @@ void loop() {
           </div>
           <div>
             <h2 className="text-2xl font-bold text-white">Connect Real ESP32</h2>
-            <p className="text-white/40 text-sm">DS18B20 + MQ2 + OLED 0.96" Setup</p>
+            <p className="text-white/40 text-sm">DHT22 + HW-390 + OLED 0.96" Setup</p>
           </div>
         </div>
         {isOpen ? <ChevronUp className="text-white/40" /> : <ChevronDown className="text-white/40" />}
@@ -112,11 +117,11 @@ void loop() {
               <ul className="space-y-3 text-white/60 text-sm">
                 <li className="flex items-start gap-3">
                   <div className="w-5 h-5 rounded-full bg-white/10 flex items-center justify-center text-[10px] mt-0.5">1</div>
-                  <span><strong>DS18B20:</strong> VCC to 3.3V, GND to GND, Data to <strong>GPIO 4</strong> (with 4.7k resistor).</span>
+                  <span><strong>DHT22:</strong> VCC to 3.3V, GND to GND, Data to <strong>GPIO 4</strong> (with 10k pull-up).</span>
                 </li>
                 <li className="flex items-start gap-3">
                   <div className="w-5 h-5 rounded-full bg-white/10 flex items-center justify-center text-[10px] mt-0.5">2</div>
-                  <span><strong>MQ2:</strong> VCC to 5V, GND to GND, Analog Out to <strong>GPIO 34</strong>.</span>
+                  <span><strong>HW-390:</strong> VCC to 3.3V, GND to GND, Analog Out to <strong>GPIO 34</strong>.</span>
                 </li>
                 <li className="flex items-start gap-3">
                   <div className="w-5 h-5 rounded-full bg-white/10 flex items-center justify-center text-[10px] mt-0.5">3</div>
@@ -133,7 +138,7 @@ void loop() {
               <div className="bg-black/20 rounded-2xl p-4 border border-white/5 space-y-2">
                 <p className="text-xs text-white/60 flex items-center gap-2">
                   <CheckCircle size={12} className="text-emerald-500" />
-                  DallasTemperature & OneWire
+                  DHT sensor library (Adafruit)
                 </p>
                 <p className="text-xs text-white/60 flex items-center gap-2">
                   <CheckCircle size={12} className="text-emerald-500" />

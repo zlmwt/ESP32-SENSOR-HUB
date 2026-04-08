@@ -56,7 +56,7 @@ export function App() {
   const [lastRiskLevel, setLastRiskLevel] = useState<string>('Normal');
   const [lastLoggingState, setLastLoggingState] = useState<boolean | null>(null);
   const [isDeviceConnected, setIsDeviceConnected] = useState<boolean>(false);
-  const [manualData, setManualData] = useState({ temperature: 25, humidity: 50, gas: 200 });
+  const [manualData, setManualData] = useState({ temperature: 25, humidity: 50, soil: 50 });
   const [isFirebaseReady, setIsFirebaseReady] = useState(false);
 
   // Initialize Firebase Auth
@@ -192,27 +192,6 @@ export function App() {
     return levels[maxRisk];
   };
 
-  // Statistics Calculation
-  const stats = React.useMemo(() => {
-    if (logs.length === 0) return null;
-    
-    const calculate = (key: 'temperature' | 'humidity' | 'gas') => {
-      const values = logs.map(l => l[key]).filter(v => v !== undefined);
-      if (values.length === 0) return { current: 0, avg: 0, max: 0 };
-      return {
-        current: values[0],
-        avg: values.reduce((a, b) => a + b, 0) / values.length,
-        max: Math.max(...values)
-      };
-    };
-
-    return {
-      temp: calculate('temperature'),
-      hum: calculate('humidity'),
-      gas: calculate('gas')
-    };
-  }, [logs]);
-
   // Notification Monitor (Removed client-side alert logic as it's now handled server-side via API)
   // This prevents duplicate notifications and ensures alerts work when tab is closed.
 
@@ -238,6 +217,7 @@ export function App() {
           });
         }
         setSettings(data);
+        setIsLoading(false); // Only set loading false when data is actually here
       } else {
         // Initialize settings if they don't exist
         set(settingsRef, {
@@ -247,8 +227,8 @@ export function App() {
           retentionDays: 7,
           lastUpdated: dbServerTimestamp()
         });
+        // Don't set isLoading(false) here, wait for the next fire with data
       }
-      setIsLoading(false);
     }, (error) => {
       console.error("[App] Settings listener error:", error);
       setIsLoading(false); // Stop loading even on error
@@ -257,15 +237,67 @@ export function App() {
     return () => settingsUnsubscribe();
   }, [isAuthenticated, isFirebaseReady]);
 
+  // Helper to get numeric timestamp from various formats
+  const getTimestamp = (ts: any): number => {
+    if (!ts) return 0;
+    if (typeof ts === 'number') return ts;
+    if (typeof ts === 'string') return new Date(ts).getTime();
+    if (ts.toMillis) return ts.toMillis();
+    if (ts.toDate) return ts.toDate().getTime();
+    if (ts.seconds) return ts.seconds * 1000;
+    return 0;
+  };
+
   const [sessionStartTime, setSessionStartTime] = useState<number>(Date.now());
+
+  // Statistics Calculation
+  const filteredLogs = React.useMemo(() => {
+    if (!settings?.isLogging) return logs;
+    return logs.filter(log => {
+      const ts = getTimestamp(log.timestamp);
+      return ts > 0 && ts >= sessionStartTime;
+    });
+  }, [logs, settings?.isLogging, sessionStartTime]);
+
+  const stats = React.useMemo(() => {
+    if (logs.length === 0) return null;
+    
+    const calculate = (key: 'temperature' | 'humidity' | 'soil') => {
+      // Current is ALWAYS the absolute latest value from the logs array
+      const current = Number(logs[0][key]) || 0;
+      
+      const sessionValues = filteredLogs.map(l => Number(l[key])).filter(v => !isNaN(v));
+      
+      // If no data in current session yet, fallback to current value for all stats
+      if (sessionValues.length === 0) return { current, avg: current, max: current };
+      
+      const sum = sessionValues.reduce((a, b) => a + b, 0);
+      const avg = sum / sessionValues.length;
+      const max = Math.max(...sessionValues);
+      
+      return {
+        current,
+        avg: isNaN(avg) ? 0 : avg,
+        max: isNaN(max) ? 0 : max
+      };
+    };
+
+    return {
+      temp: calculate('temperature'),
+      hum: calculate('humidity'),
+      soil: calculate('soil')
+    };
+  }, [logs, filteredLogs]);
 
   // Reset session start time when logging is toggled on
   useEffect(() => {
     if (settings?.isLogging) {
-      // Use a 30s buffer to account for clock skew between client and server
-      setSessionStartTime(Date.now() - 30000);
+      // Use settings.lastUpdated as the session start time if available, 
+      // otherwise fallback to current time minus buffer
+      const lastUpdated = getTimestamp(settings.lastUpdated) || Date.now();
+      setSessionStartTime(lastUpdated - 30000);
     }
-  }, [settings?.isLogging]);
+  }, [settings?.isLogging, settings?.lastUpdated]);
 
   useEffect(() => {
     if (!isAuthenticated || !isFirebaseReady) return;
@@ -282,14 +314,10 @@ export function App() {
         const data: SensorData[] = [];
         snapshot.forEach((childSnapshot) => {
           const val = childSnapshot.val();
-          // Filter: If logging is active, only show logs from this session
-          // If not logging, show historical data
-          if (!settings?.isLogging || (val.timestamp && val.timestamp >= sessionStartTime)) {
-            data.push({
-              id: childSnapshot.key as string,
-              ...val
-            });
-          }
+          data.push({
+            id: childSnapshot.key as string,
+            ...val
+          });
         });
         const reversedData = data.reverse();
         setLogs(reversedData);
@@ -348,45 +376,70 @@ export function App() {
   // Tab Lock Logic to prevent multiple simulators
   useEffect(() => {
     const tabId = Math.random().toString(36).substring(7);
+    
     const checkTab = () => {
-      const activeTab = localStorage.getItem('esp32_active_tab');
-      if (!activeTab || activeTab === tabId) {
-        localStorage.setItem('esp32_active_tab', tabId);
+      const now = Date.now();
+      const rawData = localStorage.getItem('esp32_active_tab_data');
+      
+      try {
+        const data = rawData ? JSON.parse(rawData) : null;
+        
+        // If no active tab, or it's us, or the last heartbeat was more than 5 seconds ago
+        if (!data || data.tabId === tabId || (now - data.lastSeen > 5000)) {
+          localStorage.setItem('esp32_active_tab_data', JSON.stringify({
+            tabId,
+            lastSeen: now
+          }));
+          setIsTabActive(true);
+        } else {
+          setIsTabActive(false);
+        }
+      } catch (e) {
+        // If data is corrupted, just take over
+        localStorage.setItem('esp32_active_tab_data', JSON.stringify({
+          tabId,
+          lastSeen: now
+        }));
         setIsTabActive(true);
-      } else {
-        setIsTabActive(false);
       }
     };
 
     checkTab();
     const interval = setInterval(checkTab, 2000);
-    window.addEventListener('beforeunload', () => {
-      if (localStorage.getItem('esp32_active_tab') === tabId) {
-        localStorage.removeItem('esp32_active_tab');
+
+    const cleanup = () => {
+      const rawData = localStorage.getItem('esp32_active_tab_data');
+      if (rawData) {
+        try {
+          const data = JSON.parse(rawData);
+          if (data.tabId === tabId) {
+            localStorage.removeItem('esp32_active_tab_data');
+          }
+        } catch (e) {}
       }
-    });
+    };
+
+    window.addEventListener('beforeunload', cleanup);
 
     return () => {
       clearInterval(interval);
-      if (localStorage.getItem('esp32_active_tab') === tabId) {
-        localStorage.removeItem('esp32_active_tab');
-      }
+      cleanup();
+      window.removeEventListener('beforeunload', cleanup);
     };
   }, []);
 
   // Mock Data Simulation (for testing without real ESP32)
   useEffect(() => {
     const interval = settings?.interval;
-    const isLogging = settings?.isLogging;
     
-    if (isSimulating && isLogging && isAuthenticated && interval && isTabActive) {
+    if (isSimulating && isAuthenticated && interval && isTabActive) {
       console.log(`[App] Starting simulator with interval: ${interval}ms`);
       simulator.start(interval);
     } else {
       simulator.stop();
     }
     return () => simulator.stop();
-  }, [isSimulating, settings?.isLogging, settings?.interval, isAuthenticated, isTabActive]);
+  }, [isSimulating, settings?.interval, isAuthenticated, isTabActive]);
 
   const handleManualInput = async () => {
     if (!isAuthenticated) return;
@@ -488,7 +541,22 @@ export function App() {
             className="flex items-center gap-6"
           >
             <button
-              onClick={() => setIsSimulating(!isSimulating)}
+              onClick={() => {
+                if (!settings) return; // Prevent crash if settings not loaded
+                const nextSimState = !isSimulating;
+                setIsSimulating(nextSimState);
+                
+                // If turning on simulation, also ensure logging is on
+                if (nextSimState && !settings.isLogging) {
+                  const settingsRef = ref(db, 'settings/logging');
+                  set(settingsRef, {
+                    ...settings,
+                    isLogging: true,
+                    lastUpdated: dbServerTimestamp()
+                  });
+                }
+              }}
+              disabled={!settings}
               className={`px-6 py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all duration-500 border ${
                 isSimulating 
                   ? "bg-amber-500/20 text-amber-400 border-amber-500/30 glow-amber" 
@@ -520,19 +588,30 @@ export function App() {
         {!isTabActive && settings?.isLogging && (
           <motion.div 
             variants={itemVariants}
-            className="bg-amber-500/10 border border-amber-500/20 p-4 rounded-2xl mb-8 flex items-center gap-4 glow-amber"
+            className="bg-amber-500/10 border border-amber-500/20 p-6 rounded-3xl mb-8 flex flex-col md:flex-row items-center justify-between gap-6 glow-amber"
           >
-            <div className="p-2 bg-amber-500/20 rounded-lg">
-              <AlertTriangle className="text-amber-500" size={20} />
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-amber-500/20 rounded-2xl">
+                <AlertTriangle className="text-amber-500" size={24} />
+              </div>
+              <div>
+                <p className="text-amber-200 text-sm font-black uppercase tracking-widest">
+                  Simulation Standby
+                </p>
+                <p className="text-amber-200/60 text-xs font-mono mt-1">
+                  The simulator is active in another tab. This tab is paused to prevent data conflicts.
+                </p>
+              </div>
             </div>
-            <div>
-              <p className="text-amber-200 text-sm font-bold tracking-tight">
-                Simulation Standby
-              </p>
-              <p className="text-amber-200/60 text-xs font-mono">
-                The simulator is already running in another tab. This tab is paused to prevent duplicate data logs.
-              </p>
-            </div>
+            <button
+              onClick={() => {
+                localStorage.removeItem('esp32_active_tab_data');
+                window.location.reload();
+              }}
+              className="px-6 py-3 bg-amber-500 text-black text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-amber-400 transition-all shadow-lg shadow-amber-500/20"
+            >
+              Force Takeover
+            </button>
           </motion.div>
         )}
 
@@ -572,7 +651,7 @@ export function App() {
                 <p className="text-white/30 text-[10px] font-black uppercase tracking-widest mb-1">Current</p>
                 <div className="flex items-baseline gap-2">
                   <h2 className="text-5xl font-black font-mono tracking-tighter text-glow text-emerald-400">
-                    {stats?.temp.current.toFixed(1) ?? '0.0'}
+                    {stats?.temp?.current?.toFixed(1) ?? '0.0'}
                   </h2>
                   <span className="text-xl text-white/30 font-mono">°C</span>
                 </div>
@@ -581,11 +660,11 @@ export function App() {
               <div className="grid grid-cols-2 gap-4 pt-4 border-t border-white/5">
                 <div>
                   <p className="text-white/20 text-[8px] font-black uppercase tracking-widest mb-1">Average</p>
-                  <p className="text-lg font-bold font-mono text-white/60">{stats?.temp.avg.toFixed(1) ?? '0.0'}°C</p>
+                  <p className="text-lg font-bold font-mono text-white/60">{stats?.temp?.avg?.toFixed(1) ?? '0.0'}°C</p>
                 </div>
                 <div>
                   <p className="text-white/20 text-[8px] font-black uppercase tracking-widest mb-1">Maximum</p>
-                  <p className="text-lg font-bold font-mono text-white/60">{stats?.temp.max.toFixed(1) ?? '0.0'}°C</p>
+                  <p className="text-lg font-bold font-mono text-white/60">{stats?.temp?.max?.toFixed(1) ?? '0.0'}°C</p>
                 </div>
               </div>
             </div>
@@ -615,7 +694,7 @@ export function App() {
                 <p className="text-white/30 text-[10px] font-black uppercase tracking-widest mb-1">Current</p>
                 <div className="flex items-baseline gap-2">
                   <h2 className="text-5xl font-black font-mono tracking-tighter text-glow text-blue-400">
-                    {stats?.hum.current.toFixed(1) ?? '0.0'}
+                    {stats?.hum?.current?.toFixed(1) ?? '0.0'}
                   </h2>
                   <span className="text-xl text-white/30 font-mono">%</span>
                 </div>
@@ -624,17 +703,17 @@ export function App() {
               <div className="grid grid-cols-2 gap-4 pt-4 border-t border-white/5">
                 <div>
                   <p className="text-white/20 text-[8px] font-black uppercase tracking-widest mb-1">Average</p>
-                  <p className="text-lg font-bold font-mono text-white/60">{stats?.hum.avg.toFixed(1) ?? '0.0'}%</p>
+                  <p className="text-lg font-bold font-mono text-white/60">{stats?.hum?.avg?.toFixed(1) ?? '0.0'}%</p>
                 </div>
                 <div>
                   <p className="text-white/20 text-[8px] font-black uppercase tracking-widest mb-1">Maximum</p>
-                  <p className="text-lg font-bold font-mono text-white/60">{stats?.hum.max.toFixed(1) ?? '0.0'}%</p>
+                  <p className="text-lg font-bold font-mono text-white/60">{stats?.hum?.max?.toFixed(1) ?? '0.0'}%</p>
                 </div>
               </div>
             </div>
           </motion.div>
 
-          {/* Gas Card */}
+          {/* Soil Card */}
           <motion.div 
             variants={itemVariants}
             whileHover={{ scale: 1.02, y: -5 }}
@@ -643,14 +722,14 @@ export function App() {
             className="glass-card rounded-3xl p-8 relative overflow-hidden group glow-amber"
           >
             <div className="absolute top-0 right-0 p-6 opacity-15 group-hover:opacity-30 transition-all duration-700">
-              <Wind size={120} className="text-amber-500/40 drop-shadow-[0_0_15px_rgba(245,158,11,0.4)]" />
+              <Droplets size={120} className="text-amber-500/40 drop-shadow-[0_0_15px_rgba(245,158,11,0.4)]" />
             </div>
             <div className="flex items-center gap-3 mb-6">
               <div className="relative">
                 <div className="w-2 h-6 bg-amber-500 rounded-full" />
                 <div className="absolute inset-0 bg-amber-500/50 blur-sm rounded-full animate-pulse" />
               </div>
-              <p className="text-amber-400 text-[10px] font-black uppercase tracking-[0.3em]">MQ2 Gas Sensor</p>
+              <p className="text-amber-400 text-[10px] font-black uppercase tracking-[0.3em]">HW-390 Soil Sensor</p>
             </div>
             
             <div className="space-y-6">
@@ -658,20 +737,20 @@ export function App() {
                 <p className="text-white/30 text-[10px] font-black uppercase tracking-widest mb-1">Current</p>
                 <div className="flex items-baseline gap-2">
                   <h2 className="text-5xl font-black font-mono tracking-tighter text-glow text-amber-400">
-                    {stats?.gas.current.toFixed(0) ?? '0'}
+                    {stats?.soil?.current?.toFixed(0) ?? '0'}
                   </h2>
-                  <span className="text-xl text-white/30 font-mono">PPM</span>
+                  <span className="text-xl text-white/30 font-mono">%</span>
                 </div>
               </div>
               
               <div className="grid grid-cols-2 gap-4 pt-4 border-t border-white/5">
                 <div>
                   <p className="text-white/20 text-[8px] font-black uppercase tracking-widest mb-1">Average</p>
-                  <p className="text-lg font-bold font-mono text-white/60">{stats?.gas.avg.toFixed(0) ?? '0'} PPM</p>
+                  <p className="text-lg font-bold font-mono text-white/60">{stats?.soil?.avg?.toFixed(0) ?? '0'}%</p>
                 </div>
                 <div>
                   <p className="text-white/20 text-[8px] font-black uppercase tracking-widest mb-1">Maximum</p>
-                  <p className="text-lg font-bold font-mono text-white/60">{stats?.gas.max.toFixed(0) ?? '0'} PPM</p>
+                  <p className="text-lg font-bold font-mono text-white/60">{stats?.soil?.max?.toFixed(0) ?? '0'}%</p>
                 </div>
               </div>
             </div>
@@ -712,11 +791,11 @@ export function App() {
             />
             <SensorChart 
               data={logs} 
-              dataKey="gas" 
+              dataKey="soil" 
               color="#f59e0b" 
-              title="Gas Level" 
-              unit=" PPM" 
-              icon={<Wind />}
+              title="Soil Moisture" 
+              unit="%" 
+              icon={<Droplets />}
             />
           </div>
         </div>
@@ -748,7 +827,7 @@ export function App() {
                 </div>
                 Virtual ESP32 Console
               </h3>
-              <VirtualDeviceConsole logs={simLogs} isActive={settings?.isLogging || false} />
+              <VirtualDeviceConsole logs={simLogs} isActive={isSimulating} />
             </motion.div>
           )}
         </AnimatePresence>
@@ -775,43 +854,43 @@ export function App() {
             <div className="flex flex-wrap gap-3">
               <button
                 onClick={() => {
-                  setManualData({ temperature: 25, humidity: 45, gas: 300 });
+                  setManualData({ temperature: 25, humidity: 45, soil: 50 });
                   setTimeout(handleManualInput, 100);
                 }}
                 disabled={!settings?.isLogging}
                 className="px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-emerald-400 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all disabled:opacity-20"
               >
-                Clean Air
+                Optimal Soil
               </button>
               <button
                 onClick={() => {
-                  setManualData({ temperature: 26, humidity: 55, gas: 600 });
+                  setManualData({ temperature: 26, humidity: 55, soil: 25 });
                   setTimeout(handleManualInput, 100);
                 }}
                 disabled={!settings?.isLogging}
                 className="px-4 py-2 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 text-blue-400 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all disabled:opacity-20"
               >
-                Normal Indoor
+                Dry Soil
               </button>
               <button
                 onClick={() => {
-                  setManualData({ temperature: 35, humidity: 75, gas: 2500 });
+                  setManualData({ temperature: 35, humidity: 75, soil: 80 });
                   setTimeout(handleManualInput, 100);
                 }}
                 disabled={!settings?.isLogging}
                 className="px-4 py-2 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all disabled:opacity-20"
               >
-                Smoke Detected
+                Moist Soil
               </button>
               <button
                 onClick={() => {
-                  setManualData({ temperature: 28, humidity: 85, gas: 6500 });
+                  setManualData({ temperature: 28, humidity: 85, soil: 10 });
                   setTimeout(handleManualInput, 100);
                 }}
                 disabled={!settings?.isLogging}
                 className="px-4 py-2 bg-red-600/20 hover:bg-red-600/30 border border-red-600/30 text-red-500 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all disabled:opacity-20 glow-red"
               >
-                Gas Leak
+                Critical Dry
               </button>
             </div>
           </div>
@@ -836,11 +915,11 @@ export function App() {
               />
             </div>
             <div className="space-y-3">
-              <label className="block text-[10px] font-black text-white/60 uppercase tracking-[0.3em]">Gas Level (PPM)</label>
+              <label className="block text-[10px] font-black text-white/60 uppercase tracking-[0.3em]">Soil Moisture (%)</label>
               <input
                 type="number"
-                value={manualData.gas}
-                onChange={(e) => setManualData(prev => ({ ...prev, gas: Number(e.target.value) }))}
+                value={manualData.soil}
+                onChange={(e) => setManualData(prev => ({ ...prev, soil: Number(e.target.value) }))}
                 className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 text-white font-mono text-xl focus:outline-none focus:ring-2 focus:ring-amber-500/50 transition-all"
               />
             </div>

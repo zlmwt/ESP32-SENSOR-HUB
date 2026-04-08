@@ -4,7 +4,7 @@ import { db } from '../firebase';
 export interface SimulatedData {
   temperature: number;
   humidity: number;
-  gas: number;
+  soil: number;
   timestamp: Date;
 }
 
@@ -13,8 +13,8 @@ export interface SimulationConfig {
   tempMax: number;
   humidityMin: number;
   humidityMax: number;
-  gasMin: number;
-  gasMax: number;
+  soilMin: number;
+  soilMax: number;
   noise: number; // 0 to 1
 }
 
@@ -26,8 +26,8 @@ export class ESP32Simulator {
     tempMax: 30,
     humidityMin: 40,
     humidityMax: 80,
-    gasMin: 0,
-    gasMax: 500,
+    soilMin: 0,
+    soilMax: 100,
     noise: 0.5
   };
 
@@ -54,18 +54,23 @@ export class ESP32Simulator {
       const data: SimulatedData = {
         temperature: generateValue(this.config.tempMin, this.config.tempMax, this.config.noise),
         humidity: generateValue(this.config.humidityMin, this.config.humidityMax, this.config.noise),
-        gas: generateValue(this.config.gasMin, this.config.gasMax, this.config.noise),
+        soil: generateValue(this.config.soilMin, this.config.soilMax, this.config.noise),
         timestamp: new Date()
       };
 
       try {
+        console.log(`[Simulator] Sending data:`, {
+          temperature: data.temperature.toFixed(2),
+          humidity: data.humidity.toFixed(2),
+          soil: data.soil.toFixed(2)
+        });
         const response = await fetch('/api/esp32/log', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             temperature: data.temperature,
             humidity: data.humidity,
-            gas: data.gas
+            soil: data.soil
           })
         });
 

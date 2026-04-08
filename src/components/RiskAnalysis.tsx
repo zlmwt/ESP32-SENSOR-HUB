@@ -21,7 +21,9 @@ interface RiskInfo {
 export const RiskAnalysis: React.FC<RiskAnalysisProps> = ({ currentData }) => {
   if (!currentData) return null;
 
-  const { temperature, humidity, gas } = currentData;
+  const temperature = Number(currentData.temperature) || 0;
+  const humidity = Number(currentData.humidity) || 0;
+  const soil = Number(currentData.soil) || 0;
 
   const getTemperatureRisk = (temp: number): RiskLevel => {
     if (temp >= 18 && temp <= 30) return 'Normal';
@@ -37,24 +39,25 @@ export const RiskAnalysis: React.FC<RiskAnalysisProps> = ({ currentData }) => {
     return 'Dangerous';
   };
 
-  const getGasRisk = (ppm: number): RiskLevel => {
-    if (ppm < 400) return 'Normal'; // Clean Air (200-400)
-    if (ppm >= 400 && ppm < 1000) return 'Low Risk'; // Normal Indoor (300-800)
-    if (ppm >= 1000 && ppm < 5000) return 'Medium Risk'; // Smoke Detected (1000-5000)
-    return 'Dangerous'; // Gas Leak (5000+)
+  const getSoilRisk = (s: number): RiskLevel => {
+    if (s >= 30 && s <= 70) return 'Normal';
+    if ((s > 70 && s <= 85) || (s >= 15 && s < 30)) return 'Low Risk';
+    if ((s > 85 && s <= 95) || (s >= 5 && s < 15)) return 'Medium Risk';
+    return 'Dangerous';
   };
 
-  const getGasCategory = (ppm: number): string => {
-    if (ppm < 400) return 'Clean Air';
-    if (ppm >= 400 && ppm < 1000) return 'Normal Indoor';
-    if (ppm >= 1000 && ppm < 5000) return 'Smoke Detected';
-    return 'Gas Leak';
+  const getSoilCategory = (s: number): string => {
+    if (s < 15) return 'Very Dry';
+    if (s >= 15 && s < 30) return 'Dry';
+    if (s >= 30 && s <= 70) return 'Optimal';
+    if (s > 70 && s <= 85) return 'Moist';
+    return 'Very Wet';
   };
 
-  const gasCategory = getGasCategory(gas);
+  const soilCategory = getSoilCategory(soil);
   const tempRisk = getTemperatureRisk(temperature);
   const humRisk = getHumidityRisk(humidity);
-  const gasRisk = getGasRisk(gas);
+  const soilRisk = getSoilRisk(soil);
 
   const riskPriority: Record<RiskLevel, number> = {
     'Normal': 0,
@@ -63,7 +66,7 @@ export const RiskAnalysis: React.FC<RiskAnalysisProps> = ({ currentData }) => {
     'Dangerous': 3,
   };
 
-  const overallRiskLevel: RiskLevel = [tempRisk, humRisk, gasRisk].reduce((prev, curr) => 
+  const overallRiskLevel: RiskLevel = [tempRisk, humRisk, soilRisk].reduce((prev, curr) => 
     riskPriority[curr] > riskPriority[prev] ? curr : prev, 'Normal' as RiskLevel);
 
   const riskConfig: Record<RiskLevel, RiskInfo> = {
@@ -73,7 +76,7 @@ export const RiskAnalysis: React.FC<RiskAnalysisProps> = ({ currentData }) => {
       bgColor: 'bg-emerald-500/10',
       borderColor: 'border-emerald-500/20',
       icon: <CheckCircle className="text-emerald-400" size={24} />,
-      message: 'All systems are within safe operating parameters. DHT22 and MQ2 sensors reporting normal levels.',
+      message: 'All systems are within safe operating parameters. DHT22 and HW-390 sensors reporting normal levels.',
     },
     'Low Risk': {
       level: 'Low Risk',
@@ -151,10 +154,10 @@ export const RiskAnalysis: React.FC<RiskAnalysisProps> = ({ currentData }) => {
                 </motion.div>
                 <motion.div 
                   layout
-                  className={`flex flex-col items-end px-4 py-2 rounded-xl border ${gasRisk === 'Normal' ? 'border-emerald-500/50 bg-emerald-500/10' : 'border-red-500/50 bg-red-500/10'}`}
+                  className={`flex flex-col items-end px-4 py-2 rounded-xl border ${soilRisk === 'Normal' ? 'border-emerald-500/50 bg-emerald-500/10' : 'border-red-500/50 bg-red-500/10'}`}
                 >
-                  <span className="text-[8px] font-black text-white/60 uppercase tracking-widest">Gas Status</span>
-                  <span className={`text-xs font-mono font-bold ${gasRisk === 'Normal' ? 'text-emerald-400' : 'text-red-400'}`}>{gasCategory}</span>
+                  <span className="text-[8px] font-black text-white/60 uppercase tracking-widest">Soil Status</span>
+                  <span className={`text-xs font-mono font-bold ${soilRisk === 'Normal' ? 'text-emerald-400' : 'text-red-400'}`}>{soilCategory}</span>
                 </motion.div>
               </div>
             </div>
@@ -179,7 +182,7 @@ export const RiskAnalysis: React.FC<RiskAnalysisProps> = ({ currentData }) => {
                   <p className="text-[10px] text-white/60 uppercase font-black tracking-widest">Temperature</p>
                 </div>
                 <p className="text-sm text-white/80 font-medium">
-                  Current reading <span className="text-emerald-400 font-mono font-bold">{temperature?.toFixed(1) ?? '0.0'}°C</span> is {tempRisk.toLowerCase()}. 
+                  Current reading <span className="text-emerald-400 font-mono font-bold">{temperature.toFixed(1)}°C</span> is {tempRisk.toLowerCase()}. 
                   {tempRisk === 'Normal' ? ' Temperature is stable and safe.' : ' Please check the room temperature.'}
                 </p>
               </motion.div>
@@ -192,7 +195,7 @@ export const RiskAnalysis: React.FC<RiskAnalysisProps> = ({ currentData }) => {
                   <p className="text-[10px] text-white/60 uppercase font-black tracking-widest">Humidity</p>
                 </div>
                 <p className="text-sm text-white/80 font-medium">
-                  Current reading <span className="text-blue-400 font-mono font-bold">{humidity?.toFixed(1) ?? '0.0'}%</span> is {humRisk.toLowerCase()}. 
+                  Current reading <span className="text-blue-400 font-mono font-bold">{humidity.toFixed(1)}%</span> is {humRisk.toLowerCase()}. 
                   {humRisk === 'Normal' ? ' Humidity is stable and safe.' : ' Please check the room humidity.'}
                 </p>
               </motion.div>
@@ -201,12 +204,12 @@ export const RiskAnalysis: React.FC<RiskAnalysisProps> = ({ currentData }) => {
                 className="glass-card bg-white/5 rounded-2xl p-5 border-white/10 group/card hover:bg-white/10 transition-all"
               >
                 <div className="flex items-center gap-3 mb-3">
-                  <Wind size={16} className="text-amber-400" />
-                  <p className="text-[10px] text-white/60 uppercase font-black tracking-widest">Gas Level</p>
+                  <Droplets size={16} className="text-amber-400" />
+                  <p className="text-[10px] text-white/60 uppercase font-black tracking-widest">Soil Moisture</p>
                 </div>
                 <p className="text-sm text-white/80 font-medium">
-                  Gas level <span className="text-amber-400 font-mono font-bold">{gas?.toFixed(0) ?? '0'} PPM</span> is categorized as <span className="font-bold">{gasCategory}</span>.
-                  {gasRisk === 'Normal' ? ' Air quality is clean and safe.' : ' Please take appropriate precautions.'}
+                  Soil moisture <span className="text-amber-400 font-mono font-bold">{soil.toFixed(0)}%</span> is categorized as <span className="font-bold">{soilCategory}</span>.
+                  {soilRisk === 'Normal' ? ' Soil condition is optimal for plants.' : ' Please check the soil moisture level.'}
                 </p>
               </motion.div>
             </div>

@@ -2,7 +2,7 @@ export interface SensorData {
   id?: string;
   temperature: number;
   humidity: number;
-  gas: number;
+  soil: number;
   timestamp: any; // Firestore Timestamp or String
 }
 

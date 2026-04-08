@@ -21,19 +21,25 @@ interface SensorChartProps {
   icon: React.ReactNode;
 }
 
-const CustomTooltip = ({ active, payload, label, unit }: any) => {
+const CustomTooltip = ({ active, payload, label, unit, icon }: any) => {
   if (active && payload && payload.length) {
     return (
       <div className="glass-card p-4 rounded-xl border border-white/10 shadow-2xl backdrop-blur-2xl">
         <p className="text-[10px] font-black text-white/30 uppercase tracking-widest mb-2">{label}</p>
         <div className="space-y-1">
           {payload.map((entry: any, index: number) => (
-            <div key={index} className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
-              <span className="text-xs font-bold text-white/80">{entry.name}:</span>
-              <span className="text-xs font-mono font-bold" style={{ color: entry.color }}>
-                {entry.value?.toFixed(1) ?? '0.0'}{unit}
-              </span>
+            <div key={index} className="flex items-center gap-3">
+              {icon && (
+                <div className="p-2 rounded-lg bg-white/5 border border-white/10">
+                  {React.cloneElement(icon as React.ReactElement, { size: 14, style: { color: entry.color } })}
+                </div>
+              )}
+              <div className="flex flex-col">
+                <span className="text-[10px] font-black text-white/40 uppercase tracking-widest">{entry.name}</span>
+                <span className="text-sm font-mono font-black" style={{ color: entry.color }}>
+                  {entry.value?.toFixed(1) ?? '0.0'}{unit}
+                </span>
+              </div>
             </div>
           ))}
         </div>
@@ -129,8 +135,9 @@ export const SensorChart: React.FC<SensorChartProps> = ({ data, dataKey, color, 
               tickFormatter={(val) => `${val}${unit === ' PPM' ? '' : unit}`}
             />
             <Tooltip 
-              content={<CustomTooltip unit={unit} />} 
+              content={<CustomTooltip unit={unit} icon={icon} />} 
               cursor={{ stroke: color, strokeWidth: 1, strokeDasharray: '4 4' }} 
+              isAnimationActive={false}
             />
             <Area 
               type="monotone" 

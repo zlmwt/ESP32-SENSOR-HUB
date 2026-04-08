@@ -43,8 +43,8 @@ export const SensorTable: React.FC<SensorTableProps> = ({ data }) => {
               </th>
               <th className="px-10 py-6 font-black border-b border-white/5">
                 <div className="flex items-center gap-2">
-                  <Wind size={14} className="text-amber-400" />
-                  Gas
+                  <Droplets size={14} className="text-amber-400" />
+                  Soil
                 </div>
               </th>
             </tr>
@@ -100,7 +100,7 @@ export const SensorTable: React.FC<SensorTableProps> = ({ data }) => {
                     <td className="px-10 py-6">
                       <div className="flex items-baseline gap-1.5">
                         <span className="text-xl font-black font-mono text-emerald-400 text-glow group-hover/row:scale-110 transition-transform origin-left">
-                          {log.temperature?.toFixed(1) ?? '0.0'}
+                          {Number(log.temperature || 0).toFixed(1)}
                         </span>
                         <span className="text-[10px] text-white/20 font-mono uppercase">°C</span>
                       </div>
@@ -108,7 +108,7 @@ export const SensorTable: React.FC<SensorTableProps> = ({ data }) => {
                     <td className="px-10 py-6">
                       <div className="flex items-baseline gap-1.5">
                         <span className="text-xl font-black font-mono text-blue-400 text-glow group-hover/row:scale-110 transition-transform origin-left">
-                          {log.humidity?.toFixed(1) ?? '0.0'}
+                          {Number(log.humidity || 0).toFixed(1)}
                         </span>
                         <span className="text-[10px] text-white/20 font-mono uppercase">%</span>
                       </div>
@@ -116,9 +116,9 @@ export const SensorTable: React.FC<SensorTableProps> = ({ data }) => {
                     <td className="px-10 py-6">
                       <div className="flex items-baseline gap-1.5">
                         <span className="text-xl font-black font-mono text-amber-400 text-glow group-hover/row:scale-110 transition-transform origin-left">
-                          {log.gas?.toFixed(0) ?? '0'}
+                          {Number(log.soil || 0).toFixed(0)}
                         </span>
-                        <span className="text-[10px] text-white/20 font-mono uppercase">PPM</span>
+                        <span className="text-[10px] text-white/20 font-mono uppercase">%</span>
                       </div>
                     </td>
                   </motion.tr>

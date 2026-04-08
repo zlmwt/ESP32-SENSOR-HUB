@@ -62,7 +62,7 @@ export const VirtualDeviceConsole: React.FC<VirtualDeviceConsoleProps> = ({ logs
                   <span className="text-emerald-500/50 mr-2">[{format(log.timestamp, 'HH:mm:ss.SSS')}]</span>
                   <span className="text-emerald-400 mr-2">INFO:</span>
                   <span className="text-white/80 group-hover/line:text-white transition-colors leading-relaxed">
-                    Pushing data: temp={log.temperature?.toFixed(2) ?? '0.00'}°C, gas={log.gas?.toFixed(0) ?? '0'}ppm
+                    Pushing data: temp={Number(log.temperature || 0).toFixed(2)}°C, hum={Number(log.humidity || 0).toFixed(1)}%, gas={Number(log.gas || 0).toFixed(0)}ppm
                   </span>
                 </div>
               </div>
